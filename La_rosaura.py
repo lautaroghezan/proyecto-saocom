@@ -1,6 +1,4 @@
-print("Proyecto La Rosa")
-
-# Definimos los puntos del polígono de La Rosaura en Tandil (Longitud, Latitud)
+# Coordenadas del polígono de La Rosaura en Tandil (Longitud, Latitud)
 poligono_tandil = [
     [-59.329905, -37.217237],  # Esquina 1
     [-59.346728, -37.204268],  # Esquina 2
@@ -9,4 +7,5 @@ poligono_tandil = [
     [-59.329905, -37.217237]   # Cierre del lote
 ]
 
-
+print("--- Proyecto SAOCOM: Campo La Rosaura ---")
+print(f"Lote cargado correctamente con {len(poligono_tandil) - 1} esquinas.")
