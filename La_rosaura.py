@@ -1,4 +1,4 @@
-print("Proyecto La Rosaura")
+print("Proyecto La Rosa")
 
 # Definimos los puntos del polígono de La Rosaura en Tandil (Longitud, Latitud)
 poligono_tandil = [
