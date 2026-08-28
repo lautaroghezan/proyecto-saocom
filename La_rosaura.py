@@ -9,5 +9,4 @@ poligono_tandil = [
     [-59.329905, -37.217237]   # Cierre del lote
 ]
 
-print("--- Proyecto SAOCOM: Campo La Rosaura ---")
-print(f"Lote cargado correctamente con {len(poligono_tandil) - 1} esquinas definidas.")
+
