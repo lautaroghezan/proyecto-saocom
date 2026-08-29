@@ -1,7 +1,8 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from shapely.geometry import Polygon
 
-# 1. Identificación fija del Lote (Tandil)
+# 1. IDENTIFICACIÓN Y GEOMETRÍA FIJA DEL LOTE (Tandil)
 ID_LOTE = "La_Rosaura_Tandil_01"
 coordenadas_tandil = [
     [-59.329905, -37.217237], [-59.346728, -37.204268],
@@ -10,71 +11,106 @@ coordenadas_tandil = [
 ]
 lote_la_rosaura = Polygon(coordenadas_tandil)
 
-# 2. BASE DE DATOS DEL PROYECTO (Diccionario histórico por campaña)
-# Almacenará el resultado del procesamiento SAOCOM año tras año
+# Dimensiones de la grilla de alta resolución (20x20 = 400 unidades espaciales de 10 metros)
+FILAS, COLUMNAS = 20, 20
+np.random.seed(42)  # Datos fijos para consistencia en la simulación
+
+# =====================================================================
+# SECCIÓN I: BUCLE HISTÓRICO PLURIANUAL (2020 - ACTUALIDAD)
+# =====================================================================
+print("=== INICIANDO DETECCIÓN HISTÓRICA ANUAL SAOCOM ===")
 historico_campanas = {}
 
-# 3. PIPELINE DE PROCESAMIENTO REPETITIVO ANUAL
-def procesar_ciclo_anual_saocom(ano_siembra):
-    """
-    Ejecuta las 3 fases del pipeline para una campaña específica.
-    Abarca desde la siembra (Octubre del año_siembra) hasta la cosecha (Mayo del año_siguiente).
-    """
-    ano_cosecha = ano_siembra + 1
-    nombre_campana = f"{ano_siembra}/{ano_cosecha}"
-    
-    print(f"\n==================================================")
-    print(f"🔄 PROCESANDO CAMPAÑA AGRÍCOLA: {nombre_campana}")
-    print(f"==================================================")
-    
-    # --- FASE 1: Identificación (Octubre - Diciembre del año de siembra) ---
-    print(f"🛰️ [Fase 1] Analizando datos SAOCOM (HV/HH) desde 15-Oct-{ano_siembra} a 30-Dic-{ano_siembra}...")
-    # Simulación de datos: Suelo desnudo inicial en Octubre -> Crecimiento exponencial en Diciembre
-    rvi_inicio = np.random.uniform(0.1, 0.2)
-    rvi_pico_fase1 = np.random.uniform(0.5, 0.7)
-    
-    if rvi_pico_fase1 > 0.5:
-        clasificacion = "Maiz_Temprano"
-    else:
-        clasificacion = "Pastura_o_Tardio"
+def ejecutar_bucle_historico():
+    for ano in range(2020, 2026):
+        campana = f"{ano}/{ano+1}"
+        # Simulación de respuesta de radar promedio por campaña
+        rvi_pico = np.random.uniform(0.45, 0.68)
+        humedad_db = round(np.random.uniform(-14.5, -9.0), 2)
+        biomasa_tn = round(np.random.uniform(34.0, 47.0), 1)
         
-    print(f"     -> Resultado: Curva RVI detectada. Clasificado como: {clasificacion}")
+        clasificacion = "Maiz_Temprano" if rvi_pico > 0.52 else "Pastura_o_Tardio"
+        
+        historico_campanas[campana] = {
+            "Clasificacion": clasificacion,
+            "Humedad_Suelo_dB": humedad_db,
+            "Biomasa_Max_TN_HA": biomasa_tn
+        }
+        print(f"🌾 Campaña {campana} -> Detectado: {clasificacion} | Rendimiento: {biomasa_tn} TN/HA | Humedad: {humedad_db} dB")
 
-    # --- FASE 2: Estrés Hídrico (Diciembre - Marzo) ---
-    print(f"🛰️ [Fase 2] Monitoreando humedad de suelo (HH dB) desde 15-Dic-{ano_siembra} a 15-Mar-{ano_cosecha}...")
-    # Simulación de índice de humedad en Tandil (Valores típicos entre -16 dB seco y -6 dB muy húmedo)
-    humedad_suelo_db = round(np.random.uniform(-15.0, -8.0), 2)
-    alerta_estres = "⚠️ ALERTA: Sequía en floración. Adelantar ventana de picado." if humedad_suelo_db < -13.5 else "✔ Humedad óptima."
-    print(f"     -> Resultado: Humedad media: {humedad_suelo_db} dB | Estado: {alerta_estres}")
+ejecutar_bucle_historico()
 
-    # --- FASE 3: Biomasa Máxima y Ventana de Cosecha (Enero - Mayo del año de cosecha) ---
-    print(f"🛰️ [Fase 3] Calculando volumen máximo de biomasa y secado de planta hasta Mayo-{ano_cosecha}...")
-    # Simulación de rendimiento total alcanzado (Banda L midiendo estructura completa del cultivo)
-    biomasa_maxima_tn = round(np.random.uniform(35.0, 48.0), 1)
-    materia_seca_final = round(np.random.uniform(31.5, 35.5), 1)
-    disparo_picadora = 32.0 <= materia_seca_final <= 35.0
-    print(f"     -> Resultado: Biomasa máxima estimada: {biomasa_maxima_tn} TN/HA | Materia Seca: {materia_seca_final}%")
+# =====================================================================
+# SECCIÓN II: GENERACIÓN DE MATRICES POR UNIDAD ESPACIAL ACTUAL
+# =====================================================================
+print("\n=== ANALIZANDO UNIDADES ESPACIALES ACTUALES ===")
+# Potencial productivo base intrínseco de cada celda (loma vs bajo)
+potencial_suelo_base = np.random.uniform(28.0, 46.0, (FILAS, COLUMNAS))
+# Coeficiente de retención hídrica derivado del historial de decibelios (canal HH)
+capacidad_retencion_agua = np.random.uniform(0.75, 1.25, (FILAS, COLUMNAS))
 
-    # --- GUARDAR RESULTADOS EN LA BASE DE DATOS HISTÓRICA ---
-    historico_campanas[nombre_campana] = {
-        "Clasificacion": clasificacion,
-        "Humedad_Suelo_dB": humedad_suelo_db,
-        "Biomasa_Max_TN_HA": biomasa_maxima_tn,
-        "Materia_Seca_Porcentaje": materia_seca_final,
-        "Aviso_Contratista": disparo_picadora
-    }
+# Generamos la matriz actual de humedad por píxel para los gráficos
+mapa_humedad_actual = np.random.uniform(-15.0, -7.0, (FILAS, COLUMNAS))
 
-# 4. BUCLE CRONOLÓGICO: Desde el inicio de SAOCOM (2020) hasta la campaña actual (2026)
-# El bucle toma el año de inicio de siembra de cada ciclo agrícola
-ano_inicio_satelite = 2020
-ano_actual_sistema = 2026
+# =====================================================================
+# SECCIÓN III: MODELO PREDICTIVO PARA LA PRÓXIMA CAMPAÑA (2026/2027)
+# =====================================================================
+def predecir_y_graficar_proxima_campana(escenario_climatico="Seco"):
+    print(f"\n🔮 EJECUTANDO MODELO PREDICTIVO CAMPAÑA 2026/2027 -> Escenario: [{escenario_climatico}]")
+    
+    # Impacto climático regional proyectado para Tandil
+    factor_clima = 0.80 if escenario_climatico == "Seco" else 1.0
+    
+    matriz_prediccion_rendimiento = np.zeros((FILAS, COLUMNAS))
+    
+    # Análisis espacial celda por celda (unidad de 10 metros)
+    for f in range(FILAS):
+        for c in range(COLUMNAS):
+            potencial_celda = potencial_suelo_base[f, c]
+            retencion_celda = capacidad_retencion_agua[f, c]
+            
+            # En años secos, los píxeles con mala retención hídrica sufren una penalización doble
+            if escenario_climatico == "Seco":
+                rendimiento_proyectado = potencial_celda * factor_clima * (retencion_celda * 0.85)
+            else:
+                rendimiento_proyectado = potencial_celda * factor_clima * retencion_celda
+                
+            matriz_prediccion_rendimiento[f, c] = round(rendimiento_proyectado, 2)
+            
+    # Métricas consolidadas del lote para la toma de decisiones
+    rendimiento_medio_lote = np.mean(matriz_prediccion_rendimiento)
+    print(f"📊 Predicción completada para la próxima campaña:")
+    print(f"   -> Rendimiento Promedio Estimado del Lote: {rendimiento_medio_lote:.2f} TN/HA de Materia Verde")
+    print(f"   -> Píxel de Máximo Rendimiento Esperado: {np.max(matriz_prediccion_rendimiento):.2f} TN/HA")
+    print(f"   -> Píxel de Máximo Riesgo Hídrico: {np.min(matriz_prediccion_rendimiento):.2f} TN/HA")
+    
+    # =====================================================================
+    # SECCIÓN IV: GENERACIÓN GRÁFICA AUTOMATIZADA (.PNG)
+    # =====================================================================
+    print("\n🎨 Dibujando mapas de calor por unidad espacial...")
+    
+    # Gráfico 1: Humedad actual por píxel
+    plt.figure(figsize=(6, 5))
+    plt.imshow(mapa_humedad_actual, cmap='YlGnBu', origin='lower')
+    plt.colorbar(label='Humedad del Suelo (Canal HH en dB)')
+    plt.title(f'La Rosaura (Tandil) - Humedad Actual por Píxel (10m)', fontsize=9)
+    plt.xlabel('Celdas Eje X')
+    plt.ylabel('Celdas Eje Y')
+    plt.savefig("mapa_humedad_pixel.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    print("✔ Gráfico exportado: mapa_humedad_pixel.png")
+    
+    # Gráfico 2: Rendimiento Predictivo Próxima Campaña por píxel
+    plt.figure(figsize=(6, 5))
+    plt.imshow(matriz_prediccion_rendimiento, cmap='RdYlGn', origin='lower')
+    plt.colorbar(label='Rendimiento Proyectado Biomasa (TN/HA)')
+    plt.title(f'La Rosaura - Predicción por Píxel (10m)\nEscenario Climático: {escenario_climatico}', fontsize=9)
+    plt.xlabel('Celdas Eje X')
+    plt.ylabel('Celdas Eje Y')
+    plt.savefig("mapa_rendimiento_predictivo.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    print("✔ Gráfico exportado: mapa_rendimiento_predictivo.png")
 
-for ano in range(ano_inicio_satelite, ano_actual_sistema):
-    procesar_ciclo_anual_saocom(ano_siembra=ano)
-
-# 5. RESUMEN FINAL HISTÓRICO
-print("\n" + "="*60)
-print("📊 RESUMEN EJECUTIVO HISTÓRICO EN GITHUB (2020 - ACTUALIDAD)")
-print("="*60)
-for campana, datos in historico_campanas.items():
-    print(f"Campaña {campana} -> Tipo: {datos['Clasificacion']} | Rendimiento: {datos['Biomasa_Max_TN_HA']} TN/HA | Humedad: {datos['Humedad_Suelo_dB']} dB")
+# Ejecutamos el motor predictivo y gráfico (puedes cambiar a "Normal" para evaluar escenarios)
+predecir_y_graficar_proxima_campana(escenario_climatico="Seco")
+print("\n🚀 Pipeline integrado ejecutado con éxito. Todo listo para sincronizar.")
