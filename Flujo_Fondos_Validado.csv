@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://opengis.net">
+  <Document>
+    <name>Lote La Rosaura - Tandil</name>
+    <Placemark>
+      <name>Campo Completo</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -59.329905,-37.217237
+              -59.346728,-37.204268
+              -59.339732,-37.198320
+              -59.322652,-37.211309
+              -59.329905,-37.217237
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
