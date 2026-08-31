@@ -1,70 +1,69 @@
-# 🛰️ Pipeline Unificado de Inteligencia Predictiva SAOCOM - Nivel L1D (Tandil)
+# 🛰️ Pipeline de Inteligencia Satelital SAOCOM - Ingesta Histórica Real (Tandil)
 
-Este repositorio aloja el núcleo del software diseñado para el análisis **histórico, espacial y predictivo** del cultivo de maíz para silo en el lote **"La Rosaura"**, Tandil, Provincia de Buenos Aires. El sistema procesa la información por **Unidad Espacial** a una resolución nativa de 10 metros por píxel utilizando la tecnología de radar de Banda L de la constelación **SAOCOM 1A y 1B (CONAE)**.
+Este repositorio aloja el núcleo del software diseñado para el análisis **histórico, espacial y predictivo** del cultivo de maíz para silo en el lote **"La Rosaura"**, Tandil, Provincia de Buenos Aires. El sistema procesa la información por **Unidad Espacial** a una resolución nativa de 10 metros por píxel utilizando datos de Radar de Apertura Sintética (SAR) en **Banda L** provenientes de la constelación argentina **SAOCOM 1A y 1B (CONAE)**.
 
-Al operar en Banda L (microondas), el pipeline evita la interferencia de la cubierta de nubes y penetra la canopia del cultivo, midiendo el volumen estructural real de la planta entera y la humedad de la tierra subsuperficial.
+Al operar en Banda L (microondas), el pipeline evita la interferencia de la cubierta de nubes (frecuente en la primavera/otoño de Tandil) y penetra la canopia del cultivo, midiendo el volumen estructural real de la planta entera y la humedad de la tierra subsuperficial.
 
 ---
 
 ## 📌 El Núcleo del Proyecto: Área de Interés (AOI)
 
-El polígono del lote agrícola está delimitado de forma estricta por las siguientes coordenadas geográficas (Longitud, Latitud):
+El polígono del establecimiento agrícola está georreferenciado de forma estricta al este de la Ruta Nacional 226 por las siguientes coordenadas geográficas de precisión (Longitud, Latitud):
 *   **Esquina 1:** `-59.329905, -37.217237`
 *   **Esquina 2:** `-59.346728, -37.204268`
 *   **Esquina 3:** `-59.339732, -37.198320`
 *   **Esquina 4:** `-59.322652, -37.211309`
 
----
-
-## 🔬 Metodología de Datos: ¿Qué es el Formato L1D?
-
-Para este proyecto se seleccionaron e indexaron **167 resultados reales e históricos** de la constelación SAOCOM. El motor de procesamiento utiliza estrictamente el nivel de producto **L1D** debido a sus ventajas operativas:
-
-*   **¿Qué es L1D?:** Es el nivel de producto de la CONAE que entrega la imagen de radar con detección de amplitud, filtrado de ruido y **ortorrectificación completa**.
-*   **Proyección sobre el terreno:** A diferencia del nivel L1A (que viene deformado por la inclinación de captura del satélite), el formato **L1D está completamente planchado y mapeado sobre la geometría real de la Tierra**.
-*   **Precisión de recorte:** Al estar ortorrectificado, permite que el archivo `.kml` de "La Rosaura" calce como una máscara perfecta sobre la matriz de píxeles, logrando un recorte de precisión quirúrgica de 10 metros por celda sin sufrir desplazamientos geográficos.
+### Formato de Consulta WKT Internacional
+```text
+POLYGON((-59.329905 -37.217237, -59.346728 -37.204268, -59.339732 -37.198320, -59.322652 -37.211309, -59.329905 -37.217237))
+```
 
 ---
 
-## 🔄 Flujo Operativo del Pipeline (Análisis Anual)
+## 🔬 Especificaciones de la Base de Datos Real Ingestada
 
-El script de Python ejecuta un procesamiento secuencial integrado dividido en tres motores de datos:
+El software ha dejado atrás la etapa de simulación y se encuentra acoplado a un paquete masivo de **167 escenas satelitales reales** descargadas del catálogo oficial, que cubren cronológicamente toda la vida operativa de la misión (2020 a la actualidad). 
 
-1.  **Bucle Histórico Plurianual:** Analiza de forma repetitiva todas las campañas anuales desde el inicio operativo de la constelación (2020) hasta el ciclo actual, acumulando la serie temporal de las 167 escenas indexadas.
-2.  **Análisis Geoespacial Matricial:** Divide el campo en celdas matriciales independientes de 10m x 10m para calcular y mapear la humedad superficial en el canal **HH** y el volumen vegetal en el canal **HV**.
-3.  **Modelo Predictivo de Próxima Campaña:** Evalúa cada píxel cruzando su potencial de rendimiento histórico con su capacidad local de retención de agua, simulando el impacto de escenarios de sequías sobre el volumen final de picado.
+La idoneidad y precisión del set de datos se fundamenta en tres pilares técnicos:
+
+### 1. Nivel de Procesamiento L1D (Mapeo Terrestre Plano)
+A diferencia de los productos crudos (L1A), las imágenes seleccionadas corresponden al nivel **L1D**. Esto significa que la CONAE entregó los archivos con **ortorrectificación geométrica completa**, totalmente planchados sobre la topografía real de Tandil. Esto permite que la máscara geográfica del campo calce con precisión milimétrica sobre las matrices numéricas, descartando el resto de la provincia de forma automatizada.
+
+### 2. Polarización Cuádruple QP (Quad-Pol)
+Todas las órbitas ingestadas operan en modo **QP**, el cual emite y recibe pulsos de energía en todas las combinaciones de ondas posibles. De este paquete, el pipeline extrae por separado los dos canales indispensables para el negocio:
+*   **Canal HH:** Mide la respuesta dieléctrica del agua en el suelo. El script convierte la amplitud a **Decibelios (dB)** para calcular la humedad profunda de la tierra, incluso con el maíz totalmente cerrado.
+*   **Canal HV:** Registra la despolarización volumétrica que ocurre cuando la onda de radar choca contra estructuras erectas y gruesas. Se utiliza para calcular el **Índice de Vegetación de Radar (RVI)** y estimar el volumen de biomasa de la planta entera sin sufrir la saturación que afecta al NDVI óptico.
 
 ---
 
-## 📅 Cronograma de Actualización y Descargas Críticas
+## 🔄 Flujo Operativo del Pipeline (Análisis y Segmentación Anual)
 
-La constelación SAOCOM opera con un tiempo de revisión estricto de **8 días** sobre las coordenadas de Tandil. Para mitigar riesgos agronómicos y anticipar la ventana de picado (32% a 35% de Materia Seca), la ingesta de datos se ejecuta bajo la siguiente política operativa:
+El script de Python ejecuta un procesamiento secuencial integrado sobre los archivos `.tif` de la carpeta `data/`:
 
-*   **Plataforma de Descargas Oficial:** El repositorio histórico y las actualizaciones se gestionan directamente desde el [Catálogo SAOCOM de la CONAE](https://conae.gov.ar).
-*   **Próxima pasada del satélite programada:** `[AGREGAR FECHA Y HORA ACÁ]` (Consultado a través de la Plataforma de Órbitas).
-*   **Ventana de Ingesta:** La descarga manual de los canales HH y HV en formato **L1D** se ejecuta en un plazo menor a 24 horas posteriores al paso para alimentar el modelo en tiempo real.
+1.  **Ingesta de Campo Completo:** El software abre la imagen satelital general del establecimiento descargada del [Catálogo SAOCOM de la CONAE](https://conae.gov.ar). Esto optimiza el disco duro y el tiempo de procesamiento, realizando una sola descarga multitemporal cada 8 días.
+2.  **Segmentación Geoespacial Interna:** Utilizando la librería `shapely`, el script divide matemáticamente la grilla general para extraer y procesar de forma independiente los datos de los **16 lotes internos** del establecimiento.
+3.  **Modelo Predictivo Acoplado:** Evalúa el potencial histórico de cada lote frente a las variables hídricas de la campaña, proyectando qué sectores específicos sostendrán su volumen verde y cuáles corren riesgo de secado forzado.
+4.  **Generación de Alertas de MS:** Monitorea la pérdida de agua en los tejidos para alertar al productor el momento exacto en que cada lote ingresa en la ventana óptima de picado (**32% a 35% de Materia Seca**).
 
 ---
 
 ## 📊 Cartografía de Salida por Píxel (10m)
 
-El software utiliza la librería `matplotlib` para exportar de manera automatizada la cartografía digital de "La Rosaura":
-
-### 1. Humedad Promedio Histórica del Suelo (Canal HH)
-![Mapa de Humedad](mapa_humedad_pixel.png)
-
-### 2. Rendimiento de Biomasa Proyectado para la Próxima Campaña (Canal HV)
-![Mapa Predictivo](mapa_rendimiento_predictivo.png)
+El pipeline utiliza la librería `matplotlib` para exportar de manera automatizada mapas de calor 2D de alta resolución:
+*   **`mapa_humedad_pixel.png`:** Mapea el patrón hídrico estable promedio del suelo (bajos hidrológicos vs lomas secas).
+*   **`mapa_rendimiento_predictivo.png`:** Proyecta la distribución de toneladas de biomasa por hectárea (TN/HA) esperadas para la próxima campaña.
 
 ---
 
 ## 🚀 Cómo Ejecutar el Entorno Local
 
-1. Activar el entorno virtual e instalar las dependencias científicas:
+1. Activar tu entorno virtual e instalar las dependencias científicas necesarias en la consola:
    ```bash
    pip install numpy shapely matplotlib rasterio
    ```
-2. Correr el script integrado de análisis espacial y predictivo:
+2. Colocar las bandas `.tif` extraídas del ZIP en la carpeta `data/` respetando el formato de fecha: `S1B_AAAAMMDD_L1D_HH.tif`.
+3. Correr el pipeline integrado:
    ```bash
    python La_rosaura.py
    ```
