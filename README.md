@@ -1,69 +1,96 @@
-# 🛰️ Pipeline de Inteligencia Satelital SAOCOM - Ingesta Histórica Real (Tandil)
+# 🛰️ Proyecto SAOCOM — La Rosaura
 
-Este repositorio aloja el núcleo del software diseñado para el análisis **histórico, espacial y predictivo** del cultivo de maíz para silo en el lote **"La Rosaura"**, Tandil, Provincia de Buenos Aires. El sistema procesa la información por **Unidad Espacial** a una resolución nativa de 10 metros por píxel utilizando datos de Radar de Apertura Sintética (SAR) en **Banda L** provenientes de la constelación argentina **SAOCOM 1A y 1B (CONAE)**.
+Pipeline de análisis satelital para el establecimiento **La Rosaura**, Tandil, Provincia de Buenos Aires, orientado al estudio multitemporal del cultivo de maíz y al desarrollo de **ambientes de manejo para fertilización variable**.
 
-Al operar en Banda L (microondas), el pipeline evita la interferencia de la cubierta de nubes (frecuente en la primavera/otoño de Tandil) y penetra la canopia del cultivo, midiendo el volumen estructural real de la planta entera y la humedad de la tierra subsuperficial.
+## Estado actual del proyecto
 
----
+El proyecto se encuentra en transición desde un entorno de simulación hacia el procesamiento de **datos SAR reales de SAOCOM 1A/1B (CONAE)**.
 
-## 📌 El Núcleo del Proyecto: Área de Interés (AOI)
+Actualmente se dispone de un catálogo de **167 productos SAOCOM L1D** que cubren el área de interés. El catálogo contiene metadatos reales de adquisición, pero el pipeline todavía no debe considerarse un procesador de píxeles SAR reales hasta incorporar y validar los productos raster L1D descargados de CONAE.
 
-El polígono del establecimiento agrícola está georreferenciado de forma estricta al este de la Ruta Nacional 226 por las siguientes coordenadas geográficas de precisión (Longitud, Latitud):
-*   **Esquina 1:** `-59.329905, -37.217237`
-*   **Esquina 2:** `-59.346728, -37.204268`
-*   **Esquina 3:** `-59.339732, -37.198320`
-*   **Esquina 4:** `-59.322652, -37.211309`
+> **Importante:** los mapas y métricas generados por versiones anteriores del script contienen componentes simulados. No deben interpretarse como mediciones reales de humedad, biomasa, rendimiento o materia seca.
 
-### Formato de Consulta WKT Internacional
+## Área de interés (AOI)
+
+Polígono general del establecimiento:
+
 ```text
 POLYGON((-59.329905 -37.217237, -59.346728 -37.204268, -59.339732 -37.198320, -59.322652 -37.211309, -59.329905 -37.217237))
 ```
 
----
+## Objetivo actual: fertilización variable
 
-## 🔬 Especificaciones de la Base de Datos Real Ingestada
+La nueva etapa busca identificar **ambientes de manejo dentro de los potreros sembrados con maíz** mediante análisis multitemporal.
 
-El software ha dejado atrás la etapa de simulación y se encuentra acoplado a un paquete masivo de **167 escenas satelitales reales** descargadas del catálogo oficial, que cubren cronológicamente toda la vida operativa de la misión (2020 a la actualidad). 
+```text
+SAOCOM L1D
+   ↓
+Bandas/polarizaciones SAR reales
+   ↓
+Calibración y control de calidad
+   ↓
+Recorte al establecimiento y potreros
+   ↓
+Serie temporal por píxel
+   ↓
+Patrones espaciales persistentes
+   ↓
+Ambientes de manejo
+   ↓
+Validación con información agronómica
+   ↓
+Mapa de prescripción de fertilización
+```
 
-La idoneidad y precisión del set de datos se fundamenta en tres pilares técnicos:
+La señal SAR no se convertirá directamente en dosis de fertilizante. La prescripción deberá calibrarse con información de campo como análisis de suelo, fertilización histórica y, cuando esté disponible, rendimiento o producción de silo.
 
-### 1. Nivel de Procesamiento L1D (Mapeo Terrestre Plano)
-A diferencia de los productos crudos (L1A), las imágenes seleccionadas corresponden al nivel **L1D**. Esto significa que la CONAE entregó los archivos con **ortorrectificación geométrica completa**, totalmente planchados sobre la topografía real de Tandil. Esto permite que la máscara geográfica del campo calce con precisión milimétrica sobre las matrices numéricas, descartando el resto de la provincia de forma automatizada.
+## Serie piloto seleccionada — campaña 2024/25
 
-### 2. Polarización Cuádruple QP (Quad-Pol)
-Todas las órbitas ingestadas operan en modo **QP**, el cual emite y recibe pulsos de energía en todas las combinaciones de ondas posibles. De este paquete, el pipeline extrae por separado los dos canales indispensables para el negocio:
-*   **Canal HH:** Mide la respuesta dieléctrica del agua en el suelo. El script convierte la amplitud a **Decibelios (dB)** para calcular la humedad profunda de la tierra, incluso con el maíz totalmente cerrado.
-*   **Canal HV:** Registra la despolarización volumétrica que ocurre cuando la onda de radar choca contra estructuras erectas y gruesas. Se utiliza para calcular el **Índice de Vegetación de Radar (RVI)** y estimar el volumen de biomasa de la planta entera sin sufrir la saturación que afecta al NDVI óptico.
+Se priorizó una serie homogénea de productos **L1D, QP, TOPSAR/TNB, RIGHT, órbita descendente, Path 145 y Row 214**.
 
----
+| Fecha | Product ID | Uso preliminar |
+|---|---|---|
+| 07/09/2024 | `EOL1DSARSAO1A14948810` | Línea base / pre-siembra |
+| 23/09/2024 | `EOL1DSARSAO1A14948841` | Pre-siembra |
+| 09/10/2024 | `EOL1DSARSAO1A14056208` | Implantación (a validar) |
+| 25/10/2024 | `EOL1DSARSAO1A14948886` | Emergencia (a validar) |
+| 10/11/2024 | `EOL1DSARSAO1A14948797` | Desarrollo inicial (a validar) |
+| 12/12/2024 | `EOL1DSARSAO1A15392623` | Desarrollo vegetativo (a validar) |
 
-## 🔄 Flujo Operativo del Pipeline (Análisis y Segmentación Anual)
+Las etapas fenológicas indicadas son hipótesis de trabajo basadas en la fecha y deberán contrastarse con las fechas reales de siembra y manejo.
 
-El script de Python ejecuta un procesamiento secuencial integrado sobre los archivos `.tif` de la carpeta `data/`:
+### Producto piloto
 
-1.  **Ingesta de Campo Completo:** El software abre la imagen satelital general del establecimiento descargada del [Catálogo SAOCOM de la CONAE](https://conae.gov.ar). Esto optimiza el disco duro y el tiempo de procesamiento, realizando una sola descarga multitemporal cada 8 días.
-2.  **Segmentación Geoespacial Interna:** Utilizando la librería `shapely`, el script divide matemáticamente la grilla general para extraer y procesar de forma independiente los datos de los **16 lotes internos** del establecimiento.
-3.  **Modelo Predictivo Acoplado:** Evalúa el potencial histórico de cada lote frente a las variables hídricas de la campaña, proyectando qué sectores específicos sostendrán su volumen verde y cuáles corren riesgo de secado forzado.
-4.  **Generación de Alertas de MS:** Monitorea la pérdida de agua en los tejidos para alertar al productor el momento exacto en que cada lote ingresa en la ventana óptima de picado (**32% a 35% de Materia Seca**).
+El primer producto elegido para pasar a procesamiento raster real es:
 
----
+**`EOL1DSARSAO1A14948810` — 07/09/2024**
 
-## 📊 Cartografía de Salida por Píxel (10m)
+Se eligió como línea base por encontrarse antes del período principal de desarrollo del cultivo y formar parte de una secuencia temporal comparable aproximadamente cada 16 días.
 
-El pipeline utiliza la librería `matplotlib` para exportar de manera automatizada mapas de calor 2D de alta resolución:
-*   **`mapa_humedad_pixel.png`:** Mapea el patrón hídrico estable promedio del suelo (bajos hidrológicos vs lomas secas).
-*   **`mapa_rendimiento_predictivo.png`:** Proyecta la distribución de toneladas de biomasa por hectárea (TN/HA) esperadas para la próxima campaña.
+## Próxima etapa técnica
 
----
+1. Descargar el producto L1D completo `EOL1DSARSAO1A14948810` desde CONAE.
+2. Inspeccionar la estructura del producto y sus metadatos XML.
+3. Identificar las polarizaciones disponibles (HH, HV, VH, VV).
+4. Verificar CRS, resolución espacial, NoData, dimensiones y representación radiométrica.
+5. Determinar a partir de los metadatos si los valores corresponden a amplitud, intensidad u otra magnitud antes de realizar cualquier conversión a dB.
+6. Recortar el raster al AOI de La Rosaura.
+7. Generar el primer mapa basado exclusivamente en píxeles SAR observados.
+8. Repetir el procesamiento sobre las restantes escenas comparables de la campaña.
+9. Construir ambientes de manejo multitemporales y validarlos agronómicamente.
 
-## 🚀 Cómo Ejecutar el Entorno Local
+## Criterios metodológicos
 
-1. Activar tu entorno virtual e instalar las dependencias científicas necesarias en la consola:
-   ```bash
-   pip install numpy shapely matplotlib rasterio
-   ```
-2. Colocar las bandas `.tif` extraídas del ZIP en la carpeta `data/` respetando el formato de fecha: `S1B_AAAAMMDD_L1D_HH.tif`.
-3. Correr el pipeline integrado:
-   ```bash
-   python La_rosaura.py
-   ```
+- No interpretar HH como una medición directa de “humedad profunda”.
+- No interpretar HV como toneladas de biomasa sin calibración.
+- No estimar TN/ha o porcentaje de materia seca únicamente a partir de SAR sin datos de campo.
+- Mantener geometrías de adquisición comparables en los análisis multitemporales siempre que sea posible.
+- Separar claramente variables observadas por el radar de variables agronómicas inferidas mediante modelos.
+
+## Dependencias previstas
+
+```bash
+pip install numpy pandas shapely matplotlib rasterio openpyxl
+```
+
+El pipeline definitivo de ingesta raster será actualizado una vez inspeccionado el primer producto L1D real.
