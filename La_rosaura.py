@@ -1,102 +1,241 @@
+"""Pipeline SAOCOM — La Rosaura.
+
+Etapa v3: transición desde datos simulados hacia productos SAR L1D reales.
+
+Este módulo NO estima humedad del suelo, biomasa, rendimiento, materia seca ni
+recomendaciones de fertilización. Primero inspecciona el producto SAOCOM,
+identifica sus rasters y metadatos, valida cobertura/CRS y recorta las bandas al
+AOI del establecimiento conservando los valores originales.
+
+La conversión radiométrica (por ejemplo a dB) se incorporará únicamente después
+de verificar en los metadatos oficiales del producto qué magnitud almacenan los
+rasters (amplitud, intensidad, sigma0 u otra).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import zipfile
+from pathlib import Path
+from typing import Iterable
+
 import numpy as np
-import matplotlib.pyplot as plt
-from shapely.geometry import Polygon
-import os
-import pandas as pd  # Motor inteligente para abrir planillas binarias modernas
+import rasterio
+from rasterio.mask import mask
+from rasterio.warp import transform_geom
 
-print("=== 🎛️ CONEXIÓN DE PRODUCCIÓN: PIPELINE CON BASE DE DATOS EXCEL CONAE ===")
 
-# 1. Geometría fija de tu campo completo en Tandil
-coordenadas_campo = [
-    [-59.329905, -37.217237], [-59.346728, -37.204268],
-    [-59.339732, -37.198320], [-59.322652, -37.211309],
-    [-59.329905, -37.217237]
-]
-campo_completo = Polygon(coordenadas_campo)
+PRODUCTO_PILOTO = "EOL1DSARSAO1A14948810"
 
-FILAS, COLUMNAS = 20, 20
-np.random.seed(42)
+# AOI general de La Rosaura en WGS84 (lon, lat).
+AOI_WGS84 = {
+    "type": "Polygon",
+    "coordinates": [[
+        [-59.329905, -37.217237],
+        [-59.346728, -37.204268],
+        [-59.339732, -37.198320],
+        [-59.322652, -37.211309],
+        [-59.329905, -37.217237],
+    ]],
+}
 
-# Buscador flexible del archivo en la carpeta data
-carpeta_data = "data"
-archivo_encontrado = None
+EXTENSIONES_RASTER = {".tif", ".tiff"}
+EXTENSIONES_METADATA = {".xml"}
 
-if os.path.exists(carpeta_data):
-    for f in os.listdir(carpeta_data):
-        if f.startswith("catalogo_saocom"):
-            archivo_encontrado = os.path.join(carpeta_data, f)
-            break
 
-# =====================================================================
-# SECCIÓN II: INGESTA BINARIA AUTOMÁTICA (DESCOMPRESIÓN Y LECTURA)
-# =====================================================================
-try:
-    print(f"📦 Descomprimiendo y leyendo base de datos indexada: {archivo_encontrado}")
-    
-    # Pandas detecta automáticamente si el archivo es un formato tabular o un libro XLSX moderno
-    # Se adapta dinámicamente usando el motor openpyxl instalado
-    if archivo_encontrado.endswith('.xlsx') or archivo_encontrado.endswith('.xls'):
-        df = pd.read_excel(archivo_encontrado)
-    else:
-        # En caso de que se haya guardado con otra extensión pero mantenga la firma binaria
-        df = pd.read_excel(archivo_encontrado, engine='openpyxl')
-    
-    # Limpiamos los nombres de las columnas para evitar espacios extras
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    # Buscamos las columnas correctas basándonos en palabras clave comunes del catálogo
-    col_id = [c for c in df.columns if 'Product ID' in c or 'id' in c.lower()][0]
-    col_fecha = [c for c in df.columns if 'Start time' in c or 'fecha' in c.lower() or 'time' in c.lower()][0]
-    
-    # Filtramos registros válidos limpiando filas vacías
-    df_filtrado = df[df[col_id].astype(str).str.startswith("EOL")].dropna(subset=[col_id, col_fecha])
-    
-    ids_reales = df_filtrado[col_id].astype(str).tolist()
-    # Convertimos las fechas a formato de texto limpio AAAA-MM-DD
-    fechas_reales = pd.to_datetime(df_filtrado[col_fecha]).dt.strftime('%Y-%m-%d').tolist()
+def listar_archivos(ruta: Path, extensiones: set[str]) -> list[Path]:
+    """Busca archivos recursivamente por extensión."""
+    return sorted(
+        p for p in ruta.rglob("*")
+        if p.is_file() and p.suffix.lower() in extensiones
+    )
 
-    print(f"✔ ¡CONEXIÓN PERFECTA! Se han extraído {len(ids_reales)} revisitas reales de Tandil del archivo comprimido.")
-    print(f"📅 Rango de análisis: Desde la campaña del {fechas_reales[-1]} hasta el ciclo actual del {fechas_reales[0]}.")
 
-except Exception as e:
-    print(f"\n❌ Error de lectura estructural: {e}")
-    print("⚠️ Activando modo de contingencia con fechas del catálogo validadas...")
-    fechas_reales = ["2023-12-02", "2024-11-29", "2025-10-31", "2026-08-15"]
-    ids_reales = ["EOL1D_REAL_01", "EOL1D_REAL_02", "EOL1D_REAL_03", "EOL1D_REAL_04"]
+def extraer_zip(zip_path: Path, destino: Path) -> Path:
+    """Extrae un producto ZIP sin modificar el archivo original."""
+    destino.mkdir(parents=True, exist_ok=True)
+    print(f"📦 Extrayendo producto: {zip_path.name}")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(destino)
+    return destino
 
-# =====================================================================
-# SECCIÓN III: MODELO PREDICTIVO ACUMULADO REAL EN BANDA L
-# =====================================================================
-print("\n🔮 Ejecutando modelo predictivo multitemporal sobre celdas de 10 metros...")
-cubo_humedad = np.zeros((FILAS, COLUMNAS, min(len(fechas_reales), 15)))
 
-for i in range(min(len(fechas_reales), 15)):
-    cubo_humedad[:, :, i] = np.random.uniform(-14.0, -9.0, (FILAS, COLUMNAS))
+def preparar_producto(entrada: Path, workdir: Path) -> Path:
+    """Acepta un ZIP de CONAE o una carpeta ya extraída."""
+    if entrada.is_dir():
+        return entrada
+    if entrada.is_file() and entrada.suffix.lower() == ".zip":
+        return extraer_zip(entrada, workdir / entrada.stem)
+    raise ValueError("La entrada debe ser el ZIP original de CONAE o una carpeta extraída.")
 
-mapa_humedad_promedio = np.mean(cubo_humedad, axis=2)
-potencial_suelo = np.random.uniform(32.0, 47.0, (FILAS, COLUMNAS))
-matriz_prediccion_biomasa = potencial_suelo * (1.0 + (mapa_humedad_promedio + 11) / 15)
 
-print("-" * 65)
-print(f"📊 RESULTADO PREDICTIVO CON BASE DE DATOS EXTRAÍDA:")
-print(f"-> Volumen de picado promedio predicho: {np.mean(matriz_prediccion_biomasa):.2f} TN/HA de Materia Verde")
-print(f"-> Píxel de Máximo Rendimiento Esperado: {np.max(matriz_prediccion_biomasa):.2f} TN/HA")
-print("-" * 65)
+def resumir_raster(path: Path) -> dict:
+    """Lee únicamente metadatos raster; no aplica transformaciones radiométricas."""
+    with rasterio.open(path) as src:
+        return {
+            "archivo": str(path),
+            "driver": src.driver,
+            "crs": str(src.crs) if src.crs else None,
+            "ancho": src.width,
+            "alto": src.height,
+            "bandas": src.count,
+            "dtype": list(src.dtypes),
+            "nodata": src.nodata,
+            "resolucion": [abs(src.transform.a), abs(src.transform.e)],
+            "bounds": [src.bounds.left, src.bounds.bottom, src.bounds.right, src.bounds.top],
+            "descripciones": list(src.descriptions),
+        }
 
-# =====================================================================
-# SECCIÓN IV: EXPORTACIÓN DE GRÁFICOS DE COSECHA (.PNG)
-# =====================================================================
-plt.figure(figsize=(6, 5))
-plt.imshow(mapa_humedad_promedio, cmap='YlGnBu', origin='lower')
-plt.colorbar(label='Humedad Promedio del Suelo (Canal HH en dB)')
-plt.title('Estabilidad Hídrica Real - Base de Datos CONAE', fontsize=9)
-plt.savefig("data/mapa_humedad_pixel.png", dpi=300, bbox_inches='tight')
-plt.close()
 
-plt.figure(figsize=(6, 5))
-plt.imshow(matriz_prediccion_biomasa, cmap='RdYlGn', origin='lower')
-plt.colorbar(label='Rendimiento Proyectado (TN/HA)')
-plt.title('Predicción de Cosecha Maíz - Serie Multitemporal Real', fontsize=9)
-plt.savefig("data/mapa_rendimiento_predictivo.png", dpi=300, bbox_inches='tight')
-plt.close()
-print("✔ Gráficos exportados con éxito adentro de la carpeta 'data/'.")
+def estadisticas_validas(data: np.ndarray, nodata: float | int | None) -> dict:
+    """Calcula estadísticas descriptivas de valores observados, sin interpretarlos."""
+    arr = np.asarray(data, dtype="float64")
+    validos = np.isfinite(arr)
+    if nodata is not None:
+        validos &= arr != nodata
+    valores = arr[validos]
+    if valores.size == 0:
+        return {"n": 0, "min": None, "media": None, "max": None}
+    return {
+        "n": int(valores.size),
+        "min": float(np.min(valores)),
+        "media": float(np.mean(valores)),
+        "max": float(np.max(valores)),
+    }
+
+
+def recortar_aoi(src_path: Path, salida: Path) -> dict:
+    """Recorta un raster al AOI y conserva sus valores y tipo de datos originales."""
+    with rasterio.open(src_path) as src:
+        if src.crs is None:
+            raise ValueError(f"El raster no declara CRS: {src_path.name}")
+
+        geom = transform_geom("EPSG:4326", src.crs, AOI_WGS84, precision=7)
+        recorte, transform = mask(src, [geom], crop=True, nodata=src.nodata)
+
+        perfil = src.profile.copy()
+        perfil.update(
+            height=recorte.shape[1],
+            width=recorte.shape[2],
+            transform=transform,
+        )
+
+        salida.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(salida, "w", **perfil) as dst:
+            dst.write(recorte)
+
+        return {
+            "archivo_origen": str(src_path),
+            "archivo_salida": str(salida),
+            "crs": str(src.crs),
+            "shape": list(recorte.shape),
+            "estadisticas_banda_1": estadisticas_validas(recorte[0], src.nodata),
+        }
+
+
+def contiene_id_producto(paths: Iterable[Path], product_id: str) -> bool:
+    """Comprueba si el ID esperado aparece en algún nombre/ruta del producto."""
+    product_id = product_id.upper()
+    return any(product_id in str(p).upper() for p in paths)
+
+
+def ejecutar(entrada: Path, salida: Path, product_id: str) -> int:
+    salida.mkdir(parents=True, exist_ok=True)
+    producto_dir = preparar_producto(entrada, salida / "extraidos")
+
+    rasters = listar_archivos(producto_dir, EXTENSIONES_RASTER)
+    metadatos = listar_archivos(producto_dir, EXTENSIONES_METADATA)
+    todos = rasters + metadatos
+
+    print("=== 🛰️ SAOCOM — INGESTA RASTER REAL ===")
+    print(f"Producto esperado: {product_id}")
+    print(f"Directorio inspeccionado: {producto_dir}")
+    print(f"GeoTIFF encontrados: {len(rasters)}")
+    print(f"XML encontrados: {len(metadatos)}")
+
+    if not rasters:
+        print("❌ No se encontraron archivos .tif/.tiff. No se generarán mapas ni inferencias.")
+        return 2
+
+    if todos and not contiene_id_producto(todos, product_id):
+        print("⚠️ El ID esperado no aparece en los nombres de los archivos. Revisar antes de interpretar resultados.")
+
+    inventario = {
+        "producto_esperado": product_id,
+        "entrada": str(entrada),
+        "directorio_producto": str(producto_dir),
+        "xml": [str(p) for p in metadatos],
+        "rasters": [],
+        "recortes": [],
+        "advertencias": [
+            "No se aplicó conversión a dB.",
+            "No se interpretaron polarizaciones como humedad o biomasa.",
+            "No se estimaron TN/ha, materia seca ni dosis de fertilizante.",
+        ],
+    }
+
+    recortes_dir = salida / "recortes_aoi"
+
+    for raster in rasters:
+        try:
+            resumen = resumir_raster(raster)
+            inventario["rasters"].append(resumen)
+            print(
+                f"✔ {raster.name}: {resumen['ancho']}x{resumen['alto']} px | "
+                f"{resumen['bandas']} banda(s) | CRS={resumen['crs']} | "
+                f"res={resumen['resolucion']}"
+            )
+
+            destino = recortes_dir / f"{raster.stem}_La_Rosaura.tif"
+            info_recorte = recortar_aoi(raster, destino)
+            inventario["recortes"].append(info_recorte)
+            print(f"  ↳ AOI recortado: {destino}")
+        except Exception as exc:
+            mensaje = f"{raster.name}: {type(exc).__name__}: {exc}"
+            inventario.setdefault("errores", []).append(mensaje)
+            print(f"⚠️ {mensaje}")
+
+    reporte = salida / "inspeccion_saocom.json"
+    reporte.write_text(json.dumps(inventario, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\n📄 Reporte técnico: {reporte}")
+    print("ℹ️ Próximo paso: inspeccionar los XML para definir calibración radiométrica y polarizaciones.")
+
+    return 0 if inventario["recortes"] else 3
+
+
+def construir_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Inspecciona y recorta un producto SAOCOM L1D real para La Rosaura."
+    )
+    parser.add_argument(
+        "entrada",
+        type=Path,
+        help="Ruta al ZIP original de CONAE o al directorio del producto ya extraído.",
+    )
+    parser.add_argument(
+        "--salida",
+        type=Path,
+        default=Path("data") / "procesado" / PRODUCTO_PILOTO,
+        help="Directorio de salida del procesamiento.",
+    )
+    parser.add_argument(
+        "--product-id",
+        default=PRODUCTO_PILOTO,
+        help="ID SAOCOM esperado para control de integridad.",
+    )
+    return parser
+
+
+def main() -> int:
+    args = construir_parser().parse_args()
+    try:
+        return ejecutar(args.entrada, args.salida, args.product_id)
+    except Exception as exc:
+        print(f"❌ Error fatal: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
