@@ -4,6 +4,59 @@ Historial técnico y metodológico del pipeline de inteligencia satelital para e
 
 ---
 
+## [v3.1.0] - Pipeline de ingesta raster real - 2026-10-23
+
+### 💻 Código
+- Refactorización completa de `La_rosaura.py` para eliminar la generación de datos mediante `np.random`.
+- Eliminación del modelo simulado de humedad, potencial de suelo, biomasa y rendimiento en TN/ha.
+- El script ahora acepta como entrada el **ZIP original de CONAE** o un directorio con el producto ya extraído.
+- Incorporación de búsqueda recursiva de GeoTIFF y XML.
+- Incorporación de inspección automática de:
+  - CRS;
+  - dimensiones raster;
+  - cantidad de bandas;
+  - tipo de datos;
+  - NoData;
+  - resolución espacial;
+  - extensión geográfica.
+- Incorporación de transformación automática del AOI desde WGS84 al CRS del producto.
+- Incorporación de recorte de los rasters al polígono de La Rosaura mediante `rasterio.mask`.
+- Conservación de los valores radiométricos originales durante el recorte.
+- Generación de estadísticas descriptivas básicas sobre los valores observados.
+- Generación de `inspeccion_saocom.json` como reporte técnico reproducible.
+- Incorporación de controles para productos sin GeoTIFF, rasters sin CRS y errores individuales de lectura/recorte.
+
+### 🔬 Salvaguardas metodológicas
+- El pipeline no realiza todavía conversión a dB.
+- La transformación radiométrica quedará condicionada a la inspección del XML del producto real.
+- No se presupone si los valores almacenados representan amplitud, intensidad, sigma0 u otra magnitud.
+- No se asigna a HH una interpretación directa como humedad del suelo.
+- No se convierte HV directamente en biomasa.
+- No se calculan TN/ha, materia seca ni dosis de fertilización sin calibración y validación agronómica.
+
+### 📥 Producto piloto solicitado a CONAE
+- Producto: `EOL1DSARSAO1A14948810`.
+- Fecha de adquisición: **07/09/2024**.
+- Pedido CONAE: **#1189052**.
+- Título del pedido: `La_Rosaura_SAOCOM_20240907`.
+- Nivel solicitado: **L1D**.
+- Modo: **TOPSAR / TNB**.
+- Polarización: **QP**.
+- Geometría: **DESCENDING / RIGHT**.
+- Aplicación temática: **Agriculture and Forestry**.
+- Estado al 23/10/2026: **REQUESTED**.
+
+### ⏭️ Próximo hito
+Cuando CONAE publique el producto:
+
+```bash
+python La_rosaura.py "ruta/al/producto_CONAE.zip"
+```
+
+El resultado de esta ejecución permitirá verificar la estructura real del producto y definir la siguiente versión del procesamiento radiométrico.
+
+---
+
 ## [v3.0.0] - Transición a SAR real y ambientes de fertilización - 2026-10-23
 
 ### 🎯 Nuevo objetivo
@@ -51,12 +104,6 @@ Análisis de suelo + manejo + rendimiento
     ↓
 Prescripción de fertilización variable
 ```
-
-### ⏭️ Próximo hito
-- Descargar e inspeccionar el producto completo `EOL1DSARSAO1A14948810`.
-- Verificar XML, polarizaciones, CRS, resolución, dimensiones, NoData y representación radiométrica.
-- Recortar el producto al AOI de La Rosaura.
-- Generar el **primer mapa del proyecto basado exclusivamente en píxeles SAR observados**.
 
 ---
 
