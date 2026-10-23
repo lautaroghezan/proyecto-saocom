@@ -6,13 +6,13 @@ Pipeline de análisis satelital para el establecimiento **La Rosaura**, Tandil, 
 
 El proyecto se encuentra en transición desde un entorno de simulación hacia el procesamiento de **datos SAR reales de SAOCOM 1A/1B (CONAE)**.
 
-Actualmente se dispone de un catálogo de **167 productos SAOCOM L1D** que cubren el área de interés. El catálogo contiene metadatos reales de adquisición, pero el pipeline todavía no debe considerarse un procesador de píxeles SAR reales hasta incorporar y validar los productos raster L1D descargados de CONAE.
+Se dispone de un catálogo de **167 productos SAOCOM L1D** que cubren el área de interés. El catálogo contiene metadatos reales de adquisición. Desde la versión v3, `La_rosaura.py` ya no genera matrices aleatorias ni estimaciones simuladas de humedad, biomasa o rendimiento: está preparado para inspeccionar y recortar productos raster L1D reales.
 
 > **Importante:** los mapas y métricas generados por versiones anteriores del script contienen componentes simulados. No deben interpretarse como mediciones reales de humedad, biomasa, rendimiento o materia seca.
 
 ## Área de interés (AOI)
 
-Polígono general del establecimiento:
+Polígono general del establecimiento en WGS84:
 
 ```text
 POLYGON((-59.329905 -37.217237, -59.346728 -37.204268, -59.339732 -37.198320, -59.322652 -37.211309, -59.329905 -37.217237))
@@ -23,11 +23,11 @@ POLYGON((-59.329905 -37.217237, -59.346728 -37.204268, -59.339732 -37.198320, -5
 La nueva etapa busca identificar **ambientes de manejo dentro de los potreros sembrados con maíz** mediante análisis multitemporal.
 
 ```text
-SAOCOM L1D
+SAOCOM L1D real
    ↓
-Bandas/polarizaciones SAR reales
+Bandas/polarizaciones SAR + XML
    ↓
-Calibración y control de calidad
+Control de calidad y calibración radiométrica
    ↓
 Recorte al establecimiento y potreros
    ↓
@@ -57,40 +57,91 @@ Se priorizó una serie homogénea de productos **L1D, QP, TOPSAR/TNB, RIGHT, ór
 | 10/11/2024 | `EOL1DSARSAO1A14948797` | Desarrollo inicial (a validar) |
 | 12/12/2024 | `EOL1DSARSAO1A15392623` | Desarrollo vegetativo (a validar) |
 
-Las etapas fenológicas indicadas son hipótesis de trabajo basadas en la fecha y deberán contrastarse con las fechas reales de siembra y manejo.
+Las etapas fenológicas son hipótesis de trabajo basadas en la fecha y deberán contrastarse con las fechas reales de siembra y manejo.
 
-### Producto piloto
+## Producto piloto y pedido CONAE
 
-El primer producto elegido para pasar a procesamiento raster real es:
+El primer producto elegido para procesamiento raster real es:
 
 **`EOL1DSARSAO1A14948810` — 07/09/2024**
 
-Se eligió como línea base por encontrarse antes del período principal de desarrollo del cultivo y formar parte de una secuencia temporal comparable aproximadamente cada 16 días.
+El producto fue solicitado en el catálogo SAOCOM de CONAE el **23/10/2026**:
 
-## Próxima etapa técnica
+- Pedido: **#1189052**
+- Título: `La_Rosaura_SAOCOM_20240907`
+- Nivel: **L1D**
+- Modo: **TOPSAR / TNB**
+- Polarización: **QP**
+- Órbita: **DESCENDING / RIGHT**
+- Aplicación temática: **Agriculture and Forestry**
+- Estado al momento de esta actualización: **REQUESTED**
 
-1. Descargar el producto L1D completo `EOL1DSARSAO1A14948810` desde CONAE.
-2. Inspeccionar la estructura del producto y sus metadatos XML.
-3. Identificar las polarizaciones disponibles (HH, HV, VH, VV).
-4. Verificar CRS, resolución espacial, NoData, dimensiones y representación radiométrica.
-5. Determinar a partir de los metadatos si los valores corresponden a amplitud, intensidad u otra magnitud antes de realizar cualquier conversión a dB.
-6. Recortar el raster al AOI de La Rosaura.
-7. Generar el primer mapa basado exclusivamente en píxeles SAR observados.
-8. Repetir el procesamiento sobre las restantes escenas comparables de la campaña.
-9. Construir ambientes de manejo multitemporales y validarlos agronómicamente.
+## Pipeline v3 — `La_rosaura.py`
 
-## Criterios metodológicos
+La versión actual elimina la simulación y acepta como entrada el **ZIP original entregado por CONAE** o un directorio donde el producto ya haya sido extraído.
 
-- No interpretar HH como una medición directa de “humedad profunda”.
-- No interpretar HV como toneladas de biomasa sin calibración.
-- No estimar TN/ha o porcentaje de materia seca únicamente a partir de SAR sin datos de campo.
-- Mantener geometrías de adquisición comparables en los análisis multitemporales siempre que sea posible.
-- Separar claramente variables observadas por el radar de variables agronómicas inferidas mediante modelos.
+El pipeline actualmente puede:
 
-## Dependencias previstas
+1. Extraer el ZIP sin modificar el archivo original.
+2. Buscar recursivamente archivos GeoTIFF (`.tif` / `.tiff`) y metadatos XML.
+3. Inventariar CRS, dimensiones, número de bandas, tipo de dato, NoData, resolución y extensión geográfica de cada raster.
+4. Transformar el AOI WGS84 al CRS propio de cada raster.
+5. Recortar cada raster al polígono de La Rosaura conservando los valores originales.
+6. Calcular estadísticas descriptivas básicas de los valores observados sin asignarles todavía una interpretación agronómica.
+7. Exportar un reporte reproducible `inspeccion_saocom.json`.
+8. Detenerse de forma segura si no encuentra rasters o si un archivo no declara CRS.
+
+### Ejecución
+
+Una vez recibido el producto de CONAE:
 
 ```bash
-pip install numpy pandas shapely matplotlib rasterio openpyxl
+python La_rosaura.py "ruta/al/producto_CONAE.zip"
 ```
 
-El pipeline definitivo de ingesta raster será actualizado una vez inspeccionado el primer producto L1D real.
+Por defecto, para el producto piloto las salidas se almacenarán en:
+
+```text
+data/
+└── procesado/
+    └── EOL1DSARSAO1A14948810/
+        ├── extraidos/
+        ├── recortes_aoi/
+        │   └── *_La_Rosaura.tif
+        └── inspeccion_saocom.json
+```
+
+También pueden definirse otro ID y directorio de salida mediante `--product-id` y `--salida`.
+
+## Qué todavía NO hace el pipeline
+
+Hasta inspeccionar el XML y los rasters reales del producto, el software deliberadamente **no**:
+
+- convierte los valores a dB;
+- interpreta HH como humedad del suelo;
+- interpreta HV como biomasa;
+- calcula RVI u otros índices sin verificar primero las polarizaciones y representación radiométrica;
+- estima TN/ha o porcentaje de materia seca;
+- genera dosis de fertilización.
+
+La fórmula radiométrica correcta se determinará a partir de los metadatos oficiales del producto. No se asumirá de antemano si corresponde una transformación basada en amplitud, potencia, sigma0 u otra magnitud.
+
+## Próximos hitos
+
+1. Esperar la publicación del pedido CONAE **#1189052**.
+2. Descargar y conservar el ZIP original de `EOL1DSARSAO1A14948810`.
+3. Ejecutar el pipeline v3 y revisar `inspeccion_saocom.json`.
+4. Inspeccionar los XML para identificar polarizaciones y representación radiométrica.
+5. Implementar y validar la calibración correspondiente.
+6. Generar el primer mapa basado exclusivamente en píxeles SAR observados.
+7. Incorporar los límites de los potreros y determinar cuáles estuvieron sembrados con maíz en 2024/25.
+8. Procesar las restantes escenas comparables de la serie piloto.
+9. Construir ambientes de manejo multitemporales y validarlos agronómicamente.
+
+## Dependencias
+
+```bash
+pip install numpy rasterio
+```
+
+Las dependencias adicionales se incorporarán únicamente cuando sean necesarias para las siguientes etapas del pipeline.
