@@ -6,8 +6,6 @@ Pipeline de análisis SAR para el establecimiento **La Rosaura**, Tandil, orient
 
 El producto piloto `EOL1DSARSAO1A14948810` (adquisición 07/09/2024), solicitado a CONAE mediante el pedido **#1189052**, ya fue recibido e inspeccionado.
 
-La inspección del ZIP y sus XML confirmó:
-
 | Propiedad | Valor observado |
 |---|---|
 | Nivel | L1D |
@@ -22,13 +20,29 @@ La inspección del ZIP y sus XML confirmó:
 | Órbita | DESCENDING / RIGHT |
 | `Sigma0Type` | `AMPLITUDE` |
 
-**Corrección importante:** este producto TOPSAR/TNB no tiene resolución de 10 m. La resolución observada es aproximadamente **43 × 42 m**. Toda documentación y análisis del proyecto debe utilizar la resolución real del producto.
+**Corrección importante:** este producto TOPSAR/TNB no tiene resolución de 10 m. La resolución observada es aproximadamente **43 × 42 m**.
 
-## Área de interés
+## Área de interés — geometría maestra
+
+El 24/10/2026 se confirmó manualmente el polígono aproximado del establecimiento. Desde esta versión, esta geometría es la **referencia maestra del proyecto**.
+
+Coordenadas suministradas originalmente en orden latitud, longitud:
 
 ```text
-POLYGON((-59.329905 -37.217237, -59.346728 -37.204268, -59.339732 -37.198320, -59.322652 -37.211309, -59.329905 -37.217237))
+-37.204333, -59.346855
+-37.198350, -59.339680
+-37.211288, -59.322638
+-37.217224, -59.329805
+-37.204333, -59.346855
 ```
+
+Para GeoJSON/WKT se almacenan en orden **longitud, latitud**:
+
+```text
+POLYGON((-59.346855 -37.204333, -59.339680 -37.198350, -59.322638 -37.211288, -59.329805 -37.217224, -59.346855 -37.204333))
+```
+
+Esta geometría reemplaza al polígono aproximado utilizado en versiones anteriores y debe usarse para todos los nuevos recortes, mapas y datasets.
 
 ## Objetivo actual: fertilización selectiva
 
@@ -54,80 +68,19 @@ Fertilización selectiva
 
 ## Pipeline real — `La_rosaura.py`
 
-La versión actual fue adaptada al formato efectivamente entregado por CONAE.
+1. Detecta los GeoTIFF L1D aun cuando CONAE los entrega sin extensión.
+2. Identifica automáticamente HH, HV, VH y VV.
+3. Transforma la geometría maestra WGS84 al CRS real EPSG:32721 y recorta las cuatro polarizaciones.
+4. Lee `Sigma0Type=AMPLITUDE` y aplica `σ⁰_dB = 20·log10(amplitud)` sólo para valores positivos.
+5. Genera GeoTIFF en amplitud, GeoTIFF en dB, PNG y estadísticas por polarización.
+6. Genera mapas basados exclusivamente en píxeles SAOCOM observados, sin matrices aleatorias.
 
-### 1. Detección del producto real
-
-El script ya no depende de la extensión `.tif`: abre los archivos de `Data/` con `rasterio` y verifica que sean GeoTIFF. Esto permite reconocer los cuatro rasters que CONAE entrega sin extensión.
-
-### 2. Identificación automática de polarizaciones
-
-Se identifican **HH, HV, VH y VV** a partir de los nombres de los archivos y se registran en `inspeccion_saocom.json`.
-
-### 3. Recorte a La Rosaura
-
-El AOI se transforma desde WGS84 al CRS real del raster (**EPSG:32721**) y cada polarización se recorta conservando los valores originales de amplitud.
-
-En el producto piloto, el recorte del establecimiento ocupa aproximadamente **50 × 51 píxeles** antes de aplicar la máscara exacta del polígono.
-
-### 4. Representación radiométrica verificada
-
-El archivo `Config/L1PROCConf.xml` declara:
-
-```xml
-<Sigma0Type>AMPLITUDE</Sigma0Type>
-```
-
-Por lo tanto, para píxeles positivos y válidos, el pipeline genera la representación de sigma cero en decibeles mediante:
-
-```text
-σ⁰_dB = 20 · log10(amplitud)
-```
-
-Los valores no positivos se excluyen de la transformación logarítmica.
-
-### 5. Productos generados
-
-Para cada polarización se generan:
-
-- GeoTIFF del recorte en amplitud original;
-- GeoTIFF de `σ⁰` en dB;
-- mapa PNG de `σ⁰` en dB;
-- estadísticas descriptivas;
-- reporte técnico `inspeccion_saocom.json`.
-
-### 6. Primer mapa SAR real
-
-El pipeline ya puede generar mapas del establecimiento basados **exclusivamente en píxeles SAOCOM observados**, sin matrices aleatorias ni rendimiento simulado.
-
-Estos mapas representan retrodispersión SAR. **No deben etiquetarse directamente como mapas de humedad, biomasa o rendimiento.**
+El reporte `inspeccion_saocom.json` registra además la geometría WGS84 utilizada en cada ejecución para mantener trazabilidad espacial.
 
 ## Ejecución
 
 ```bash
 python La_rosaura.py "ruta/al/S1A_OPER_SAR_EOSSP__CORE_L1D_OLF_20260521T202537.zip"
-```
-
-Salida esperada:
-
-```text
-data/procesado/EOL1DSARSAO1A14948810/
-├── extraidos/
-├── recortes_aoi/
-│   ├── HH_La_Rosaura_amplitud.tif
-│   ├── HH_La_Rosaura_sigma0_db.tif
-│   ├── HV_La_Rosaura_amplitud.tif
-│   ├── HV_La_Rosaura_sigma0_db.tif
-│   ├── VH_La_Rosaura_amplitud.tif
-│   ├── VH_La_Rosaura_sigma0_db.tif
-│   ├── VV_La_Rosaura_amplitud.tif
-│   └── VV_La_Rosaura_sigma0_db.tif
-├── mapas/
-│   ├── HH_La_Rosaura_sigma0_db.png
-│   ├── HV_La_Rosaura_sigma0_db.png
-│   ├── VH_La_Rosaura_sigma0_db.png
-│   └── VV_La_Rosaura_sigma0_db.png
-└── inspeccion_saocom.json
 ```
 
 ## Serie piloto 2024/25
@@ -146,24 +99,23 @@ data/procesado/EOL1DSARSAO1A14948810/
 - `σ⁰` mide retrodispersión radar; no equivale por sí sola a humedad del suelo.
 - HH/HV/VH/VV responden conjuntamente a humedad, rugosidad, estructura vegetal, geometría y otras propiedades.
 - Una escena individual no define ambientes de fertilización.
-- Los ambientes se construirán con **series temporales y patrones persistentes**.
+- Los ambientes se construirán con series temporales y patrones persistentes.
 - La dosis final requerirá análisis de suelo, manejo, objetivo productivo y validación de campo.
 - No se utilizarán los antiguos valores simulados de 38,16–49,71 TN/ha como resultados del proyecto.
 
-## Próximos hitos — fertilización selectiva
+## Próximos hitos
 
-1. Procesar las escenas restantes de la serie 2024/25 con el mismo pipeline.
-2. Incorporar los límites de los **16 potreros** de La Rosaura.
-3. Identificar los potreros de maíz y su historial de manejo.
-4. Incorporar topografía/DEM y variables de suelo disponibles.
-5. Construir una tabla por píxel/potrero/fecha con variables SAR y agronómicas.
-6. Explorar clustering para ambientes de manejo.
-7. Validar los ambientes con información de campo antes de definir dosis.
-8. Utilizar la campaña 2026/27 como campaña prospectiva de seguimiento y generación de datos.
+1. Ejecutar el producto piloto con la geometría maestra confirmada.
+2. Procesar las escenas restantes de la serie 2024/25.
+3. Incorporar los límites de los **16 potreros**.
+4. Identificar potreros de maíz y su historial de manejo.
+5. Incorporar DEM/topografía y variables de suelo.
+6. Construir la tabla por píxel/potrero/fecha para Machine Learning.
+7. Explorar y validar ambientes de manejo antes de definir dosis.
 
 ## Proyecto académico de Machine Learning
 
-El desarrollo académico asociado se documenta por separado en [`PROYECTO_FACULTAD_ML.md`](PROYECTO_FACULTAD_ML.md). El problema de ML se centrará en la **identificación y validación de ambientes para fertilización selectiva**, utilizando SAOCOM como una de las fuentes de atributos.
+El desarrollo académico asociado se documenta en [`PROYECTO_FACULTAD_ML.md`](PROYECTO_FACULTAD_ML.md) y en el repositorio `ml_fertilizacion_la_rosaura`.
 
 ## Dependencias
 
