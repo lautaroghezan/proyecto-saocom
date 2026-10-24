@@ -27,12 +27,16 @@ from rasterio.mask import mask
 from rasterio.warp import transform_geom
 
 PRODUCTO_PILOTO = "EOL1DSARSAO1A14948810"
+# Geometría maestra confirmada por el usuario el 24/10/2026.
+# GeoJSON/WKT usan orden longitud, latitud (x, y).
 AOI_WGS84 = {
     "type": "Polygon",
     "coordinates": [[
-        [-59.329905, -37.217237], [-59.346728, -37.204268],
-        [-59.339732, -37.198320], [-59.322652, -37.211309],
-        [-59.329905, -37.217237],
+        [-59.346855, -37.204333],
+        [-59.339680, -37.198350],
+        [-59.322638, -37.211288],
+        [-59.329805, -37.217224],
+        [-59.346855, -37.204333],
     ]],
 }
 POL_RE = re.compile(r"-(hh|hv|vh|vv)-m$", re.IGNORECASE)
@@ -84,7 +88,6 @@ def polarizacion(path: Path) -> str | None:
 
 
 def leer_sigma0_type(producto_dir: Path) -> str | None:
-    """Lee Sigma0Type desde Config/L1PROCConf.xml."""
     cfg = producto_dir / "Config" / "L1PROCConf.xml"
     if not cfg.exists():
         return None
@@ -122,7 +125,6 @@ def estadisticas(data: np.ndarray, nodata=None) -> dict:
 
 
 def amplitud_a_db(data: np.ndarray) -> np.ndarray:
-    """Sigma0Type=AMPLITUDE -> sigma0 dB = 20 log10(amplitud)."""
     arr = np.asarray(data, dtype="float64")
     out = np.full(arr.shape, np.nan, dtype="float32")
     ok = np.isfinite(arr) & (arr > 0)
@@ -166,23 +168,17 @@ def procesar_raster(src_path: Path, salida: Path, sigma0_type: str | None) -> di
         amp = recorte_ma[0].filled(np.nan).astype("float32")
         base = salida / "recortes_aoi" / f"{pol}_La_Rosaura"
         guardar_geotiff(base.with_name(base.name + "_amplitud.tif"), amp, src.profile, transform)
-
-        resultado = {
-            "polarizacion": pol,
-            "shape": list(amp.shape),
-            "estadisticas_amplitud": estadisticas(amp),
-            "amplitud_tif": str(base.with_name(base.name + "_amplitud.tif")),
-        }
+        resultado = {"polarizacion": pol, "shape": list(amp.shape),
+                     "estadisticas_amplitud": estadisticas(amp),
+                     "amplitud_tif": str(base.with_name(base.name + "_amplitud.tif"))}
         if sigma0_type == "AMPLITUDE":
             db = amplitud_a_db(amp)
             tif_db = base.with_name(base.name + "_sigma0_db.tif")
             png_db = salida / "mapas" / f"{pol}_La_Rosaura_sigma0_db.png"
             guardar_geotiff(tif_db, db, src.profile, transform)
             guardar_mapa_png(db, png_db, pol)
-            resultado.update({
-                "sigma0_db_tif": str(tif_db), "mapa_png": str(png_db),
-                "estadisticas_sigma0_db": estadisticas(db),
-            })
+            resultado.update({"sigma0_db_tif": str(tif_db), "mapa_png": str(png_db),
+                              "estadisticas_sigma0_db": estadisticas(db)})
         return resultado
 
 
@@ -192,29 +188,21 @@ def ejecutar(entrada: Path, salida: Path, product_id: str) -> int:
     rasters = listar_rasters(producto_dir)
     xmls = listar_xml(producto_dir)
     sigma0_type = leer_sigma0_type(producto_dir)
-
     print("=== 🛰️ SAOCOM — PRODUCTO L1D REAL ===")
     print(f"Producto: {product_id}")
     print(f"GeoTIFF detectados: {len(rasters)}")
     print(f"Polarizaciones: {[polarizacion(p) for p in rasters]}")
     print(f"Sigma0Type: {sigma0_type}")
-
     if not rasters:
         print("❌ No se detectaron GeoTIFF L1D en Data/.")
         return 2
-
     inventario = {
         "producto": product_id, "directorio_producto": str(producto_dir),
-        "sigma0_type": sigma0_type, "xml_encontrados": len(xmls),
-        "rasters": [resumir_raster(p) for p in rasters], "recortes": [],
-        "criterio_radiometrico": (
-            "20*log10(amplitud) para píxeles > 0" if sigma0_type == "AMPLITUDE"
-            else "No aplicado: Sigma0Type no confirmado como AMPLITUDE"
-        ),
-        "advertencias": [
-            "σ0 no se interpreta directamente como humedad, biomasa o rendimiento.",
-            "Las dosis de fertilización requieren análisis multitemporal y validación agronómica.",
-        ],
+        "aoi_wgs84": AOI_WGS84, "sigma0_type": sigma0_type,
+        "xml_encontrados": len(xmls), "rasters": [resumir_raster(p) for p in rasters], "recortes": [],
+        "criterio_radiometrico": "20*log10(amplitud) para píxeles > 0" if sigma0_type == "AMPLITUDE" else "No aplicado",
+        "advertencias": ["σ0 no se interpreta directamente como humedad, biomasa o rendimiento.",
+                          "Las dosis de fertilización requieren análisis multitemporal y validación agronómica."],
     }
     for p in rasters:
         try:
@@ -224,7 +212,6 @@ def ejecutar(entrada: Path, salida: Path, product_id: str) -> int:
         except Exception as exc:
             inventario.setdefault("errores", []).append(f"{p.name}: {type(exc).__name__}: {exc}")
             print(f"⚠️ {p.name}: {exc}")
-
     reporte = salida / "inspeccion_saocom.json"
     reporte.write_text(json.dumps(inventario, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"📄 Reporte: {reporte}")
