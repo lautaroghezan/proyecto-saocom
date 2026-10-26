@@ -1,87 +1,27 @@
 # 📝 Registro de Cambios (CHANGELOG) — Proyecto SAOCOM
 
-Historial técnico y metodológico del pipeline para **La Rosaura**, Tandil.
+## [v3.3.0] - 16 potreros y constelación virtual - 2026-10-26
 
----
+- Incorporadas las geometrías reales de `L01`–`L16` en `data/potreros_la_rosaura.geojson` a partir de las coordenadas aportadas por el productor.
+- `La_rosaura.py` valida los 16 IDs y recorta cada polarización SAOCOM por establecimiento y por potrero.
+- Nuevo `resumen_saocom_por_potrero.csv` con estadísticos por polarización/potrero.
+- El reporte JSON registra fuente de geometrías y advertencias metodológicas.
+- Se redefine la arquitectura como sistema multisensor / constelación virtual SAOCOM–Sentinel-2.
+- Se agrega una etapa previa de reconstrucción histórica `potrero × campaña → maíz/pastura/otro/incierto + confianza` basada en dinámica fenológica temporal, no en un umbral simple de biomasa.
+- El análisis de ambientes para fertilización queda condicionado a potreros/campañas identificados como maíz y a validación agronómica.
 
 ## [v3.2.0] - Primer producto SAOCOM real validado - 2026-10-24
 
-### 🛰️ Producto real
-- Recibido el pedido CONAE **#1189052** correspondiente a `EOL1DSARSAO1A14948810` (07/09/2024).
-- Confirmadas cuatro polarizaciones QP: **HH, HV, VH y VV**.
-- Confirmado formato **GeoTIFF FLOAT32** entregado sin extensión `.tif`.
-- Confirmado CRS **EPSG:32721 (UTM 21S)**.
-- Dimensiones por raster: **4.396 × 7.104 píxeles**.
-- Resolución observada: aproximadamente **43,55 × 42,33 m**.
-- Se corrige el supuesto previo de 10 m para este producto TOPSAR/TNB.
-
-### 🔬 Radiometría
-- `Config/L1PROCConf.xml` declara `Sigma0Type=AMPLITUDE`.
-- Para valores positivos se adopta `σ⁰_dB = 20·log10(amplitud)`.
-- Se preservan también los recortes en amplitud original.
-- Los valores de retrodispersión no se interpretan directamente como humedad, biomasa, rendimiento o dosis de fertilizante.
-
-### 💻 Pipeline
-- `La_rosaura.py` detecta GeoTIFF aun sin extensión.
-- Identifica automáticamente HH/HV/VH/VV.
-- Reproyecta el AOI al CRS del raster.
-- Recorta las cuatro polarizaciones a La Rosaura.
-- Genera GeoTIFF en amplitud y `σ⁰` dB.
-- Genera mapas PNG de retrodispersión observada.
-- Exporta estadísticas y `inspeccion_saocom.json`.
-
-### 🎓 Machine Learning
-- Se incorpora `PROYECTO_FACULTAD_ML.md`.
-- El trabajo académico se centra en ambientes para fertilización selectiva mediante SAOCOM + topografía + suelo + manejo.
-- Se prioriza inicialmente clustering y, si existen etiquetas de campo confiables, modelos supervisados con validación espacial.
-
-### ⏭️ Próximo hito
-- Procesar la serie temporal 2024/25.
-- Incorporar los 16 potreros y los potreros de maíz.
-- Incorporar DEM/topografía.
-- Construir el dataset espacial para Machine Learning.
-
----
+- Validado `EOL1DSARSAO1A14948810` (07/09/2024): L1D, TOPSAR/TNB, QP HH/HV/VH/VV, FLOAT32, EPSG:32721, ~43,55 × 42,33 m.
+- `Sigma0Type=AMPLITUDE`; conversión `sigma0_dB=20*log10(amplitud)` para valores positivos.
+- Eliminadas interpretaciones directas de sigma0 como humedad, biomasa, rendimiento o dosis.
+- Pipeline de ingesta/recorte raster real y `inspeccion_saocom.json`.
 
 ## [v3.1.0] - Pipeline de ingesta raster real - 2026-10-23
-
-- Eliminación de matrices aleatorias y resultados simulados.
-- Preparación del script para ZIP L1D reales.
-- Recorte geográfico y reporte técnico reproducible.
-- Separación explícita entre observaciones SAR e inferencias agronómicas.
-
----
+- Eliminación de matrices aleatorias y resultados simulados; recorte y reporte reproducible.
 
 ## [v3.0.0] - Transición a SAR real y ambientes de fertilización - 2026-10-23
+- Objetivo redefinido hacia fertilización variable; selección de serie piloto real.
 
-- Objetivo redefinido hacia fertilización variable en potreros de maíz.
-- Selección de serie piloto L1D QP TOPSAR/TNB.
-- Selección de `EOL1DSARSAO1A14948810` como primer producto.
-- Se invalidan como resultados reales los mapas y métricas simulados de versiones anteriores.
-
----
-
-## [v2.1.0] - Conexión al catálogo CONAE - 2026-08-30
-
-- Lectura del catálogo mediante `pandas`/`openpyxl`.
-- Extracción de IDs y fechas reales.
-- Los valores históricos de 38,16 y 49,71 TN/ha procedían de simulación y no constituyen mediciones SAOCOM.
-
----
-
-## [v2.0.0] - Preparación metodológica L1D - 2026-08-30
-
-- Indexación de productos reales del catálogo.
-- Preparación conceptual para datos L1D y QP.
-
----
-
-## [v1.1.0] - Segmentación espacial y gráficos - 2026-08-29
-
-- Grilla experimental y mapas 2D.
-
----
-
-## [v1.0.0] - Infraestructura base y Git - 2021-10-26
-
-- Configuración inicial del entorno Python y publicación del proyecto.
+## Versiones anteriores
+Las versiones 1.x–2.x corresponden a infraestructura, catálogo y prototipos previos. Los mapas/rendimientos simulados históricos no constituyen resultados observados del proyecto.
