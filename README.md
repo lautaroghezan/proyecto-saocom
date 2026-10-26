@@ -54,6 +54,30 @@ python La_rosaura.py "ruta/al/producto.zip"
 
 Puede usarse otra capa con `--potreros ruta.geojson` siempre que tenga 16 features y `potrero_id` único.
 
+## Sentinel-2: catálogo automático vía Copernicus STAC
+
+`sentinel2_la_rosaura.py` consulta directamente el catálogo STAC vigente de Copernicus Data Space Ecosystem y evita depender de la búsqueda manual del STAC Browser.
+
+Configuración inicial:
+
+- colección: `sentinel-2-l2a`;
+- campaña exploratoria: `2024-08-01` a `2025-06-30`;
+- área: bounding box calculado automáticamente a partir de los 16 potreros reales;
+- salida: `data/catalogos/sentinel2_2024_25.csv`;
+- esta etapa consulta **metadatos solamente**: no descarga imágenes.
+
+```bash
+python sentinel2_la_rosaura.py
+```
+
+El CSV incluye fecha, datetime UTC, ID de producto, satélite/plataforma, tile cuando está disponible, nubosidad informada para el producto y colección. La nubosidad del producto **no se interpreta como nubosidad efectiva sobre La Rosaura**: en una etapa posterior se aplicará máscara de nubes/sombras y se calculará el porcentaje de píxeles válidos dentro de cada potrero.
+
+El script pagina los resultados y conserva IDs únicos. Las fechas pueden modificarse, por ejemplo:
+
+```bash
+python sentinel2_la_rosaura.py --inicio 2023-08-01T00:00:00Z --fin 2024-06-30T23:59:59Z --salida data/catalogos/sentinel2_2023_24.csv
+```
+
 ## Serie piloto 2024/25
 
 | Fecha | Product ID | Estado |
@@ -77,15 +101,18 @@ Puede usarse otra capa con `--potreros ruta.geojson` siempre que tenga 16 featur
 
 ## Próximos pasos
 
-1. Ejecutar el producto piloto sobre L01–L16 y verificar recortes/estadísticas.
-2. Procesar la serie SAOCOM 2024/25.
-3. Construir series Sentinel-2 históricas por potrero.
-4. Reconstruir `potrero × campaña → maíz/pastura/otro/incierto + confianza`.
-5. Incorporar DEM, suelo y manejo.
-6. Analizar ambientes dentro de los potreros/campañas identificados como maíz.
+1. Ejecutar `sentinel2_la_rosaura.py` y revisar el catálogo real 2024/25.
+2. Evaluar cobertura temporal, duplicados/tiles y nubosidad de las escenas candidatas.
+3. Implementar máscara de nubes/sombras y porcentaje válido por L01–L16.
+4. Extraer B2/B3/B4/B5/B6/B7/B8/B8A e índices NDVI/EVI/red-edge por potrero y fecha.
+5. Procesar la serie SAOCOM 2024/25 y fusionarla por `potrero + fecha` sin inventar observaciones faltantes.
+6. Reconstruir `potrero × campaña → maíz/pastura/otro/incierto + confianza`.
+7. Incorporar DEM, suelo y manejo para estudiar ambientes de fertilización selectiva.
 
 ## Dependencias
 
 ```bash
 pip install numpy rasterio matplotlib
 ```
+
+La consulta STAC de Sentinel-2 utiliza únicamente módulos de la biblioteca estándar de Python, por lo que no agrega dependencias obligatorias.
