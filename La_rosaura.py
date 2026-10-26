@@ -1,25 +1,16 @@
 """Pipeline SAOCOM — La Rosaura.
 
-Procesamiento del producto L1D real de CONAE para fertilización selectiva.
-El producto piloto confirmó GeoTIFF sin extensión, QP (HH/HV/VH/VV), FLOAT32,
-EPSG:32721 y Sigma0Type=AMPLITUDE. Por ello la visualización en dB usa
-20*log10(amplitud) únicamente para píxeles positivos y válidos.
+Procesa productos L1D reales a dos escalas: establecimiento y 16 potreros.
+Las geometrías maestras están en data/potreros_la_rosaura.geojson. SAOCOM se
+integra luego con Sentinel-2 para reconstruir uso histórico (maíz/pastura/otro)
+y, en los potreros de maíz, estudiar ambientes para fertilización selectiva.
 
-El pipeline NO transforma la retrodispersión en humedad, biomasa, rendimiento ni
-dosis de fertilizante. Esas inferencias requieren series temporales y validación
-agronómica.
+No se interpreta sigma0 como humedad, biomasa, rendimiento ni dosis directa.
 """
-
 from __future__ import annotations
-
-import argparse
-import json
-import re
-import sys
-import zipfile
+import argparse, csv, json, re, sys, zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
-
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
@@ -27,213 +18,96 @@ from rasterio.mask import mask
 from rasterio.warp import transform_geom
 
 PRODUCTO_PILOTO = "EOL1DSARSAO1A14948810"
-# Geometría maestra confirmada por el usuario el 24/10/2026.
-# GeoJSON/WKT usan orden longitud, latitud (x, y).
-AOI_WGS84 = {
-    "type": "Polygon",
-    "coordinates": [[
-        [-59.346855, -37.204333],
-        [-59.339680, -37.198350],
-        [-59.322638, -37.211288],
-        [-59.329805, -37.217224],
-        [-59.346855, -37.204333],
-    ]],
-}
+AOI_WGS84 = {"type":"Polygon","coordinates":[[[-59.346855,-37.204333],[-59.339680,-37.198350],[-59.322638,-37.211288],[-59.329805,-37.217224],[-59.346855,-37.204333]]]}
+POTREROS_DEFAULT = Path(__file__).resolve().parent / "data" / "potreros_la_rosaura.geojson"
 POL_RE = re.compile(r"-(hh|hv|vh|vv)-m$", re.IGNORECASE)
 
+def cargar_potreros(path: Path) -> list[dict]:
+    obj=json.loads(path.read_text(encoding="utf-8"))
+    feats=obj.get("features",[])
+    if len(feats)!=16: raise ValueError(f"Se esperaban 16 potreros y se encontraron {len(feats)}")
+    ids=[f.get("properties",{}).get("potrero_id") for f in feats]
+    if len(set(ids))!=16 or any(not x for x in ids): raise ValueError("potrero_id faltante o duplicado")
+    return feats
 
-def extraer_zip(zip_path: Path, destino: Path) -> Path:
-    destino.mkdir(parents=True, exist_ok=True)
-    print(f"📦 Extrayendo producto: {zip_path.name}")
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(destino)
-    return destino
+def extraer_zip(z:Path,d:Path)->Path:
+    d.mkdir(parents=True,exist_ok=True)
+    with zipfile.ZipFile(z,"r") as f:f.extractall(d)
+    return d
 
+def preparar_producto(e:Path,w:Path)->Path:
+    if e.is_dir():return e
+    if e.is_file() and e.suffix.lower()==".zip":return extraer_zip(e,w/e.stem)
+    raise ValueError("La entrada debe ser ZIP CONAE o carpeta extraída")
 
-def preparar_producto(entrada: Path, workdir: Path) -> Path:
-    if entrada.is_dir():
-        return entrada
-    if entrada.is_file() and entrada.suffix.lower() == ".zip":
-        return extraer_zip(entrada, workdir / entrada.stem)
-    raise ValueError("La entrada debe ser el ZIP original de CONAE o una carpeta extraída.")
-
-
-def es_raster_saocom(path: Path) -> bool:
-    """Detecta los GeoTIFF L1D aun cuando CONAE los entrega sin extensión."""
-    if not path.is_file() or path.suffix.lower() == ".xml":
-        return False
-    if "Data" not in path.parts:
-        return False
+def es_raster_saocom(p:Path)->bool:
+    if not p.is_file() or p.suffix.lower()==".xml" or "Data" not in p.parts:return False
     try:
-        with rasterio.open(path) as src:
-            return src.driver == "GTiff" and src.count >= 1
-    except rasterio.errors.RasterioIOError:
-        return False
+        with rasterio.open(p) as s:return s.driver=="GTiff" and s.count>=1
+    except rasterio.errors.RasterioIOError:return False
 
-
-def listar_rasters(producto_dir: Path) -> list[Path]:
-    data_dir = producto_dir / "Data"
-    if not data_dir.exists():
-        return []
-    return sorted(p for p in data_dir.iterdir() if es_raster_saocom(p))
-
-
-def listar_xml(producto_dir: Path) -> list[Path]:
-    return sorted(p for p in producto_dir.rglob("*.xml") if p.is_file())
-
-
-def polarizacion(path: Path) -> str | None:
-    m = POL_RE.search(path.name)
-    return m.group(1).upper() if m else None
-
-
-def leer_sigma0_type(producto_dir: Path) -> str | None:
-    cfg = producto_dir / "Config" / "L1PROCConf.xml"
-    if not cfg.exists():
-        return None
-    root = ET.parse(cfg).getroot()
-    node = root.find(".//Sigma0Type")
-    return node.text.strip().upper() if node is not None and node.text else None
-
-
-def resumir_raster(path: Path) -> dict:
+def listar_rasters(d:Path)->list[Path]:
+    x=d/"Data"; return sorted(p for p in x.iterdir() if es_raster_saocom(p)) if x.exists() else []
+def polarizacion(p:Path)->str|None:
+    m=POL_RE.search(p.name);return m.group(1).upper() if m else None
+def leer_sigma0_type(d:Path)->str|None:
+    p=d/"Config"/"L1PROCConf.xml"
+    if not p.exists():return None
+    n=ET.parse(p).getroot().find(".//Sigma0Type")
+    return n.text.strip().upper() if n is not None and n.text else None
+def validos(a):
+    a=np.asarray(a,dtype="float64");return a[np.isfinite(a)]
+def estadisticas(a)->dict:
+    v=validos(a)
+    if not v.size:return {"n":0,"min":None,"media":None,"mediana":None,"p25":None,"p75":None,"max":None}
+    return {"n":int(v.size),"min":float(v.min()),"media":float(v.mean()),"mediana":float(np.median(v)),"p25":float(np.percentile(v,25)),"p75":float(np.percentile(v,75)),"max":float(v.max())}
+def amplitud_a_db(a):
+    a=np.asarray(a,dtype="float64");o=np.full(a.shape,np.nan,dtype="float32");ok=np.isfinite(a)&(a>0);o[ok]=20*np.log10(a[ok]);return o
+def guardar_tif(path,data,profile,transform):
+    path.parent.mkdir(parents=True,exist_ok=True);p=profile.copy();p.update(driver="GTiff",height=data.shape[-2],width=data.shape[-1],count=1,transform=transform,dtype="float32",nodata=np.nan)
+    with rasterio.open(path,"w",**p) as d:d.write(data.astype("float32"),1)
+def recortar(src,geom_wgs84):
+    g=transform_geom("EPSG:4326",src.crs,geom_wgs84,precision=7);ma,t=mask(src,[g],crop=True,filled=False);return ma[0].filled(np.nan).astype("float32"),t
+def procesar_raster(path:Path,salida:Path,sigma:str|None,potreros:list[dict])->dict:
+    pol=polarizacion(path) or "NA";res={"polarizacion":pol,"potreros":[]}
     with rasterio.open(path) as src:
-        return {
-            "archivo": str(path), "polarizacion": polarizacion(path),
-            "driver": src.driver, "crs": str(src.crs) if src.crs else None,
-            "ancho": src.width, "alto": src.height, "bandas": src.count,
-            "dtype": list(src.dtypes), "nodata": src.nodata,
-            "resolucion_m": [abs(src.transform.a), abs(src.transform.e)],
-            "bounds": [src.bounds.left, src.bounds.bottom, src.bounds.right, src.bounds.top],
-        }
+        if src.crs is None:raise ValueError("Raster sin CRS")
+        amp,t=recortar(src,AOI_WGS84);base=salida/"recortes_aoi"/f"{pol}_La_Rosaura";guardar_tif(base.with_name(base.name+"_amplitud.tif"),amp,src.profile,t)
+        res["establecimiento"]={"shape":list(amp.shape),"amplitud":estadisticas(amp)}
+        if sigma=="AMPLITUDE":
+            db=amplitud_a_db(amp);guardar_tif(base.with_name(base.name+"_sigma0_db.tif"),db,src.profile,t);res["establecimiento"]["sigma0_db"]=estadisticas(db)
+        for f in potreros:
+            pid=f["properties"]["potrero_id"];pa,pt=recortar(src,f["geometry"]);pb=salida/"recortes_potreros"/pid/f"{pol}_{pid}"
+            guardar_tif(pb.with_name(pb.name+"_amplitud.tif"),pa,src.profile,pt);r={"potrero_id":pid,"shape":list(pa.shape),"amplitud":estadisticas(pa)}
+            if sigma=="AMPLITUDE":
+                pdb=amplitud_a_db(pa);guardar_tif(pb.with_name(pb.name+"_sigma0_db.tif"),pdb,src.profile,pt);r["sigma0_db"]=estadisticas(pdb)
+            res["potreros"].append(r)
+    return res
 
-
-def valores_validos(data: np.ndarray, nodata=None) -> np.ndarray:
-    arr = np.asarray(data, dtype="float64")
-    ok = np.isfinite(arr)
-    if nodata is not None:
-        ok &= arr != nodata
-    return arr[ok]
-
-
-def estadisticas(data: np.ndarray, nodata=None) -> dict:
-    v = valores_validos(data, nodata)
-    if not v.size:
-        return {"n": 0, "min": None, "media": None, "mediana": None, "max": None}
-    return {"n": int(v.size), "min": float(v.min()), "media": float(v.mean()),
-            "mediana": float(np.median(v)), "max": float(v.max())}
-
-
-def amplitud_a_db(data: np.ndarray) -> np.ndarray:
-    arr = np.asarray(data, dtype="float64")
-    out = np.full(arr.shape, np.nan, dtype="float32")
-    ok = np.isfinite(arr) & (arr > 0)
-    out[ok] = 20.0 * np.log10(arr[ok])
-    return out
-
-
-def guardar_geotiff(path: Path, data: np.ndarray, perfil: dict, transform, dtype="float32", nodata=np.nan):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    p = perfil.copy()
-    p.update(driver="GTiff", height=data.shape[-2], width=data.shape[-1], count=1,
-             transform=transform, dtype=dtype, nodata=nodata)
-    with rasterio.open(path, "w", **p) as dst:
-        dst.write(data.astype(dtype), 1)
-
-
-def guardar_mapa_png(db: np.ndarray, path: Path, pol: str):
-    valid = db[np.isfinite(db)]
-    if not valid.size:
-        return
-    vmin, vmax = np.percentile(valid, [2, 98])
-    fig, ax = plt.subplots(figsize=(7, 6))
-    im = ax.imshow(db, vmin=vmin, vmax=vmax, origin="upper", cmap="gray")
-    fig.colorbar(im, ax=ax, label="σ⁰ (dB)")
-    ax.set_title(f"La Rosaura — SAOCOM L1D {pol} — 07/09/2024")
-    ax.set_xlabel("Píxel")
-    ax.set_ylabel("Píxel")
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=220, bbox_inches="tight")
-    plt.close(fig)
-
-
-def procesar_raster(src_path: Path, salida: Path, sigma0_type: str | None) -> dict:
-    pol = polarizacion(src_path) or "NA"
-    with rasterio.open(src_path) as src:
-        if src.crs is None:
-            raise ValueError(f"El raster no declara CRS: {src_path.name}")
-        geom = transform_geom("EPSG:4326", src.crs, AOI_WGS84, precision=7)
-        recorte_ma, transform = mask(src, [geom], crop=True, filled=False)
-        amp = recorte_ma[0].filled(np.nan).astype("float32")
-        base = salida / "recortes_aoi" / f"{pol}_La_Rosaura"
-        guardar_geotiff(base.with_name(base.name + "_amplitud.tif"), amp, src.profile, transform)
-        resultado = {"polarizacion": pol, "shape": list(amp.shape),
-                     "estadisticas_amplitud": estadisticas(amp),
-                     "amplitud_tif": str(base.with_name(base.name + "_amplitud.tif"))}
-        if sigma0_type == "AMPLITUDE":
-            db = amplitud_a_db(amp)
-            tif_db = base.with_name(base.name + "_sigma0_db.tif")
-            png_db = salida / "mapas" / f"{pol}_La_Rosaura_sigma0_db.png"
-            guardar_geotiff(tif_db, db, src.profile, transform)
-            guardar_mapa_png(db, png_db, pol)
-            resultado.update({"sigma0_db_tif": str(tif_db), "mapa_png": str(png_db),
-                              "estadisticas_sigma0_db": estadisticas(db)})
-        return resultado
-
-
-def ejecutar(entrada: Path, salida: Path, product_id: str) -> int:
-    salida.mkdir(parents=True, exist_ok=True)
-    producto_dir = preparar_producto(entrada, salida / "extraidos")
-    rasters = listar_rasters(producto_dir)
-    xmls = listar_xml(producto_dir)
-    sigma0_type = leer_sigma0_type(producto_dir)
-    print("=== 🛰️ SAOCOM — PRODUCTO L1D REAL ===")
-    print(f"Producto: {product_id}")
-    print(f"GeoTIFF detectados: {len(rasters)}")
-    print(f"Polarizaciones: {[polarizacion(p) for p in rasters]}")
-    print(f"Sigma0Type: {sigma0_type}")
-    if not rasters:
-        print("❌ No se detectaron GeoTIFF L1D en Data/.")
-        return 2
-    inventario = {
-        "producto": product_id, "directorio_producto": str(producto_dir),
-        "aoi_wgs84": AOI_WGS84, "sigma0_type": sigma0_type,
-        "xml_encontrados": len(xmls), "rasters": [resumir_raster(p) for p in rasters], "recortes": [],
-        "criterio_radiometrico": "20*log10(amplitud) para píxeles > 0" if sigma0_type == "AMPLITUDE" else "No aplicado",
-        "advertencias": ["σ0 no se interpreta directamente como humedad, biomasa o rendimiento.",
-                          "Las dosis de fertilización requieren análisis multitemporal y validación agronómica."],
-    }
+def guardar_tabla(resultados:list[dict],path:Path,product_id:str):
+    rows=[]
+    for r in resultados:
+        for p in r["potreros"]:
+            s=p.get("sigma0_db",{});rows.append({"product_id":product_id,"potrero_id":p["potrero_id"],"polarizacion":r["polarizacion"],**{f"sigma0_db_{k}":s.get(k) for k in ["n","media","mediana","p25","p75"]}})
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open("w",newline="",encoding="utf-8") as f:
+        w=csv.DictWriter(f,fieldnames=rows[0].keys());w.writeheader();w.writerows(rows)
+def ejecutar(entrada:Path,salida:Path,product_id:str,potreros_path:Path)->int:
+    salida.mkdir(parents=True,exist_ok=True);potreros=cargar_potreros(potreros_path);d=preparar_producto(entrada,salida/"extraidos");rasters=listar_rasters(d);sigma=leer_sigma0_type(d)
+    print(f"Producto {product_id} | rasters={len(rasters)} | potreros={len(potreros)} | Sigma0Type={sigma}")
+    if not rasters:return 2
+    resultados=[];errores=[]
     for p in rasters:
-        try:
-            r = procesar_raster(p, salida, sigma0_type)
-            inventario["recortes"].append(r)
-            print(f"✔ {r['polarizacion']}: AOI procesado {r['shape']}")
-        except Exception as exc:
-            inventario.setdefault("errores", []).append(f"{p.name}: {type(exc).__name__}: {exc}")
-            print(f"⚠️ {p.name}: {exc}")
-    reporte = salida / "inspeccion_saocom.json"
-    reporte.write_text(json.dumps(inventario, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"📄 Reporte: {reporte}")
-    return 0 if inventario["recortes"] else 3
-
-
-def construir_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Procesa un producto SAOCOM L1D real para La Rosaura.")
-    p.add_argument("entrada", type=Path, help="ZIP original de CONAE o directorio extraído.")
-    p.add_argument("--salida", type=Path, default=Path("data") / "procesado" / PRODUCTO_PILOTO)
-    p.add_argument("--product-id", default=PRODUCTO_PILOTO)
-    return p
-
-
-def main() -> int:
-    args = construir_parser().parse_args()
-    try:
-        return ejecutar(args.entrada, args.salida, args.product_id)
-    except Exception as exc:
-        print(f"❌ Error fatal: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        try:resultados.append(procesar_raster(p,salida,sigma,potreros));print(f"✔ {polarizacion(p)}: establecimiento + 16 potreros")
+        except Exception as e:errores.append(f"{p.name}: {type(e).__name__}: {e}")
+    inv={"producto":product_id,"aoi_wgs84":AOI_WGS84,"potreros_fuente":str(potreros_path),"n_potreros":len(potreros),"sigma0_type":sigma,"resultados":resultados,"errores":errores,"advertencias":["SAOCOM no identifica por sí solo maíz/pastura.","La clasificación histórica se basará en series temporales multisensor SAOCOM + Sentinel-2.","No inferir dosis de fertilizante sin validación agronómica."]}
+    (salida/"inspeccion_saocom.json").write_text(json.dumps(inv,indent=2,ensure_ascii=False),encoding="utf-8")
+    if resultados:guardar_tabla(resultados,salida/"tablas"/"resumen_saocom_por_potrero.csv",product_id)
+    return 0 if resultados else 3
+def parser():
+    p=argparse.ArgumentParser();p.add_argument("entrada",type=Path);p.add_argument("--salida",type=Path,default=Path("data")/"procesado"/PRODUCTO_PILOTO);p.add_argument("--product-id",default=PRODUCTO_PILOTO);p.add_argument("--potreros",type=Path,default=POTREROS_DEFAULT);return p
+def main():
+    a=parser().parse_args()
+    try:return ejecutar(a.entrada,a.salida,a.product_id,a.potreros)
+    except Exception as e:print(f"❌ {type(e).__name__}: {e}",file=sys.stderr);return 1
+if __name__=="__main__":raise SystemExit(main())
