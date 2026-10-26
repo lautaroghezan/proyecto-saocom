@@ -1,144 +1,74 @@
-# 🎓 Proyecto de Machine Learning — Fertilización Selectiva de Maíz
+# 🎓 Proyecto de Machine Learning — La Rosaura
 
-## Caso de estudio: La Rosaura, Tandil
+## Pregunta ampliada
 
-### Pregunta de investigación
+¿Es posible integrar **SAOCOM + Sentinel-2 + topografía + datos agronómicos** para (1) reconstruir el uso histórico de los 16 potreros y (2) identificar ambientes de manejo dentro de los potreros de maíz útiles para fertilización selectiva?
 
-**¿Es posible identificar ambientes de manejo útiles para fertilización selectiva en maíz mediante la combinación de series temporales SAR SAOCOM, topografía y datos agronómicos?**
+## Diseño en dos modelos
 
-## Objetivo
+### Modelo 1 — reconstrucción histórica de uso
 
-Desarrollar y evaluar un modelo reproducible de Machine Learning que permita caracterizar la variabilidad espacial de los potreros de maíz de **La Rosaura** y construir ambientes de manejo que puedan ser validados agronómicamente.
+Unidad: `potrero × campaña`. Clases: `maíz`, `pastura`, `otro`, `incierto`. Se utilizará la **firma temporal/fenológica**, no una regla simple de biomasa. Sentinel-2 aporta información óptica e índices de vegetación; SAOCOM aporta series SAR L-band HH/HV/VH/VV y continuidad ante nubosidad. La salida debe incluir confianza/probabilidad y permitir `incierto`.
 
-El modelo no buscará predecir directamente `kg de fertilizante/ha` a partir de una imagen radar. Primero se modelará el **ambiente o potencial/respuesta del sitio**; la recomendación de dosis será una etapa agronómica posterior.
+### Modelo 2 — ambientes para fertilización
 
-## Fuente satelital validada
+Se ejecuta sólo sobre potreros/campañas identificados como maíz con evidencia suficiente. Unidad: celda/píxel espacial dentro del potrero observada en múltiples fechas. Integra SAR multitemporal, óptico, DEM/topografía, suelo y manejo. Primero clustering; supervisado sólo si existe target agronómico observado confiable.
 
-El primer producto real utilizado es `EOL1DSARSAO1A14948810`, adquirido el **07/09/2024**.
+## Geometría
 
-La inspección del producto confirmó:
+Los 16 potreros aportados por el productor están versionados como `data/potreros_la_rosaura.geojson` en el repositorio geoespacial, con IDs `L01`–`L16`. Son la unidad espacial estable para unir sensores, campañas y observaciones.
 
-- SAOCOM 1A, nivel L1D;
-- TOPSAR / TNB;
-- QP: HH, HV, VH y VV;
-- GeoTIFF FLOAT32;
-- EPSG:32721 (UTM 21S);
-- resolución de píxel aproximada de **43,55 × 42,33 m**;
-- `Sigma0Type = AMPLITUDE`;
-- conversión para valores positivos: `σ⁰_dB = 20·log10(amplitud)`.
+## SAOCOM validado
 
-Por lo tanto, el trabajo académico utilizará la **resolución observada del producto (~43 m)** y no el supuesto previo de 10 m.
-
-## Unidad de análisis
-
-La unidad de trabajo podrá definirse a nivel de **píxel dentro de potrero y fecha de adquisición**, preservando identificadores que permitan realizar validación espacial y evitar fuga de información entre entrenamiento y prueba.
+Producto piloto `EOL1DSARSAO1A14948810`, 07/09/2024: L1D TOPSAR/TNB, QP HH/HV/VH/VV, FLOAT32, EPSG:32721, ~43,55 × 42,33 m y `Sigma0Type=AMPLITUDE`. Para amplitud positiva: `sigma0_dB = 20*log10(amplitud)`.
 
 ## Variables candidatas
 
-### SAR SAOCOM
-- `σ⁰_HH_dB`
-- `σ⁰_HV_dB`
-- `σ⁰_VH_dB`
-- `σ⁰_VV_dB`
-- diferencias/razones entre polarizaciones cuando estén justificadas;
-- estadísticos temporales por píxel: media, mediana, variabilidad y evolución;
-- índices polarimétricos únicamente cuando su formulación sea compatible con los datos disponibles.
+**SAOCOM:** sigma0 HH/HV/VH/VV, diferencias justificadas, estadísticos temporales.  
+**Sentinel-2:** reflectancias e índices ópticos/fenológicos, calidad/nubes, máximos, mínimos, amplitud, pendientes y fechas características.  
+**Topografía:** elevación, pendiente, orientación/posición relativa.  
+**Manejo/campo:** suelo, siembra, híbrido, densidad, fertilización, clima, observaciones y producción cuando existan.  
+**Historia inferida:** cultivo campaña previa, años desde último maíz y frecuencia de maíz, siempre conservando incertidumbre.
 
-### Topografía
-- elevación;
-- pendiente;
-- posición topográfica relativa;
-- variables derivadas de un DEM.
+## Validación
 
-### Agronomía y manejo
-Cuando estén disponibles:
-- potrero;
-- fecha de siembra;
-- híbrido;
-- densidad;
-- análisis de suelo;
-- fertilización aplicada;
-- precipitaciones/clima;
-- observaciones de cultivo;
-- rendimiento o producción final de silo.
-
-## Estrategia de Machine Learning
-
-### Etapa 1 — EDA y calidad de datos
-- distribución de variables SAR;
-- valores faltantes y atípicos;
-- correlaciones;
-- variabilidad dentro y entre potreros;
-- estabilidad temporal de los patrones espaciales.
-
-### Etapa 2 — Ingeniería de atributos
-Construcción de atributos multitemporales y combinación con topografía y datos agronómicos.
-
-### Etapa 3 — Aprendizaje no supervisado
-Como primera aproximación, identificar ambientes sin imponer una etiqueta de rendimiento:
-
-- K-means como línea base;
-- comparación con otros métodos de clustering si aportan valor;
-- análisis de estabilidad de los grupos entre fechas/campañas.
-
-Los clusters no se denominarán automáticamente “alto”, “medio” o “bajo potencial” hasta ser contrastados con evidencia agronómica.
-
-### Etapa 4 — Aprendizaje supervisado
-Si se obtiene una variable objetivo confiable (rendimiento, materia seca, respuesta a fertilización u otra medición de campo), comparar modelos como:
-
-- regresión/modelo simple de referencia;
-- Random Forest;
-- Gradient Boosting / XGBoost.
-
-### Etapa 5 — Validación
-La partición entrenamiento/prueba deberá respetar la estructura espacial y temporal. Se evitará dividir aleatoriamente píxeles vecinos de un mismo potrero de forma que el modelo vea prácticamente el mismo ambiente en entrenamiento y prueba.
-
-### Etapa 6 — Interpretabilidad
-Evaluar importancia de variables y, cuando corresponda, herramientas como SHAP para analizar qué atributos contribuyen a las predicciones.
-
-## Campañas
-
-### 2024/25 — construcción retrospectiva
-Se utilizará para desarrollar el pipeline, procesar la serie histórica y construir las primeras variables multitemporales.
-
-### 2026/27 — seguimiento prospectivo
-La campaña actual se utilizará para registrar desde el inicio información de manejo y campo, aplicar el pipeline sobre nuevas adquisiciones y generar datos de entrenamiento/validación con mejor trazabilidad.
+No usar `train_test_split` aleatorio de píxeles como única evidencia. Priorizar separación por potrero/bloque espacial y generalización temporal entre campañas. La reconstrucción histórica necesita campañas/lotes de referencia cuando podamos verificarlos. Los clusters no se etiquetarán alto/medio/bajo potencial sin validación agronómica. SHAP describe el modelo, no causalidad.
 
 ## Resultado esperado
 
-El resultado académico buscado no es un mapa de fertilización generado automáticamente por el radar, sino un flujo reproducible:
-
 ```text
-SAOCOM + topografía + suelo + manejo
-                 ↓
-         dataset espacial
-                 ↓
-       Machine Learning
-                 ↓
-     ambientes/potencial
-                 ↓
-      validación de campo
-                 ↓
- decisión agronómica de fertilización
+16 potreros
+   ↓
+SAOCOM + Sentinel-2
+   ↓
+series temporales por potrero
+   ↓
+maíz / pastura / otro / incierto + confianza
+   ↓
+selección de potreros/campañas de maíz
+   ↓
+SAR + óptico + DEM + suelo + manejo
+   ↓
+ambientes de manejo
+   ↓
+validación agronómica
+   ↓
+decisión posterior de fertilización
 ```
 
-## Hipótesis de trabajo
+## Estado
 
-La combinación de información SAR multitemporal con variables topográficas y agronómicas puede capturar patrones espaciales persistentes dentro de los potreros de maíz que sean útiles para definir ambientes de manejo, siempre que esos patrones sean posteriormente validados con datos de campo.
+- [x] AOI confirmado.
+- [x] 16 potreros incorporados (`L01`–`L16`).
+- [x] Primer SAOCOM real inspeccionado y radiometría verificada.
+- [x] Pipeline adaptado a recorte por potrero.
+- [x] Diseño de constelación virtual SAOCOM–Sentinel-2 definido.
+- [ ] Ejecutar producto piloto sobre L01–L16.
+- [ ] Construir serie Sentinel-2 histórica.
+- [ ] Procesar serie SAOCOM multitemporal.
+- [ ] Reconstruir cultivo por potrero/campaña con confianza.
+- [ ] Incorporar DEM, suelo y manejo.
+- [ ] Construir dataset analítico.
+- [ ] Entrenar/validar Modelo 1 y ambientes del Modelo 2.
 
-## Estado actual
-
-- [x] AOI de La Rosaura definido.
-- [x] Catálogo SAOCOM disponible.
-- [x] Primer producto L1D real descargado.
-- [x] HH/HV/VH/VV identificados.
-- [x] CRS y resolución real verificados.
-- [x] Representación `Sigma0Type=AMPLITUDE` verificada.
-- [x] Pipeline adaptado para recorte y `σ⁰` en dB.
-- [ ] Incorporar geometría de los 16 potreros.
-- [ ] Identificar potreros con maíz por campaña.
-- [ ] Procesar serie multitemporal.
-- [ ] Incorporar DEM/topografía.
-- [ ] Incorporar datos de suelo y manejo.
-- [ ] Construir dataset de ML.
-- [ ] Entrenar y validar modelos.
+No se usarán rendimientos simulados ni se inferirán dosis directamente desde radar.
