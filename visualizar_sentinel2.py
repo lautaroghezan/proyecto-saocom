@@ -60,7 +60,15 @@ def load_features(path):
 
 
 def read_crop(href, features):
-    with rasterio.Env(GDAL_HTTP_MULTIRANGE="YES", GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+    # Los assets públicos de Copernicus STAC pueden exponerse como s3://.
+    # GDAL/Rasterio intenta usar credenciales AWS por defecto; para recursos
+    # públicos se fuerza acceso anónimo con AWS_NO_SIGN_REQUEST=YES.
+    env_options = {
+        "AWS_NO_SIGN_REQUEST": "YES",
+        "GDAL_HTTP_MULTIRANGE": "YES",
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    }
+    with rasterio.Env(**env_options):
         with rasterio.open(href) as src:
             geoms = [transform_geom("EPSG:4326", src.crs, f["geometry"], precision=6) for f in features]
             arr, transform = mask(src, geoms, crop=True, filled=True, nodata=0)
