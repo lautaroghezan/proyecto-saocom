@@ -13,9 +13,9 @@ credenciales S3. Deben cargarse como variables de entorno:
   CDSE_S3_SECRET_KEY
 Nunca se escriben las claves dentro del repositorio.
 
-La autenticación se realiza mediante boto3 + rasterio.session.AWSSession,
-porque Rasterio no permite inyectar AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-como opciones GDAL directas en rasterio.Env.
+La configuración de GDAL sigue el ejemplo oficial de CDSE para STAC/S3:
+AWS_S3_ENDPOINT=eodata.dataspace.copernicus.eu, región default,
+HTTPS y path-style (AWS_VIRTUAL_HOSTING=FALSE).
 """
 from __future__ import annotations
 
@@ -24,12 +24,10 @@ import json
 import os
 from pathlib import Path
 
-import boto3
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 from rasterio.mask import mask
-from rasterio.session import AWSSession
 from rasterio.warp import transform_geom
 
 from sentinel2_la_rosaura import load_farm_bbox, search_items
@@ -70,7 +68,7 @@ def load_features(path):
     return data.get("features", [])
 
 
-def make_aws_session():
+def configure_cdse_s3():
     access_key = os.environ.get("CDSE_S3_ACCESS_KEY")
     secret_key = os.environ.get("CDSE_S3_SECRET_KEY")
     if not access_key or not secret_key:
@@ -78,24 +76,24 @@ def make_aws_session():
             "Faltan las variables de entorno CDSE_S3_ACCESS_KEY y/o "
             "CDSE_S3_SECRET_KEY. Cargalas en PowerShell antes de ejecutar."
         )
-    boto_session = boto3.Session(
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name="default",
-    )
-    return AWSSession(
-        boto_session,
-        endpoint_url=f"https://{CDSE_S3_ENDPOINT}",
-        requester_pays=False,
-    )
+
+    # CDSE documenta esta configuración para GDAL/Rasterio sobre assets s3://.
+    # Se fija región 'default' porque las credenciales CDSE no son AWS estándar.
+    os.environ["AWS_ACCESS_KEY_ID"] = access_key
+    os.environ["AWS_SECRET_ACCESS_KEY"] = secret_key
+    os.environ["AWS_S3_ENDPOINT"] = CDSE_S3_ENDPOINT
+    os.environ["AWS_DEFAULT_REGION"] = "default"
+    os.environ["AWS_REGION"] = "default"
+    os.environ["AWS_HTTPS"] = "YES"
+    os.environ["AWS_VIRTUAL_HOSTING"] = "FALSE"
+    os.environ["AWS_NO_SIGN_REQUEST"] = "NO"
+    os.environ["GDAL_HTTP_TCP_KEEPALIVE"] = "YES"
+    os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
 
 
-def read_crop(href, features, aws_session):
-    env_options = {
-        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
-        "AWS_VIRTUAL_HOSTING": "FALSE",
-    }
-    with rasterio.Env(aws_session, **env_options):
+def read_crop(href, features):
+    # Las credenciales/configuración ya están en os.environ antes de crear Env.
+    with rasterio.Env():
         with rasterio.open(href) as src:
             geoms = [transform_geom("EPSG:4326", src.crs, f["geometry"], precision=6) for f in features]
             arr, transform = mask(src, geoms, crop=True, filled=True, nodata=0)
@@ -146,8 +144,8 @@ def main():
     ap.add_argument("--salida", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
-    aws_session = make_aws_session()
-    print("Credenciales S3 CDSE detectadas en variables de entorno.")
+    configure_cdse_s3()
+    print("Credenciales S3 CDSE detectadas y GDAL configurado para eodata.")
 
     features = load_features(args.potreros)
     if len(features) != 16:
@@ -161,10 +159,10 @@ def main():
     print(f"Fecha: {date}; nubosidad global: {cloud(item)}%")
     print("Leyendo sólo el recorte de La Rosaura desde B02/B03/B04/B08...")
 
-    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features, aws_session)
-    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features, aws_session)
-    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features, aws_session)
-    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features, aws_session)
+    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features)
+    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features)
+    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features)
+    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features)
 
     rgb = np.dstack([stretch(b04), stretch(b03), stretch(b02)])
     denom = b08 + b04
