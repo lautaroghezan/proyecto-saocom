@@ -7,6 +7,12 @@ Selecciona por defecto la escena con menor nubosidad global de la campaña
   - NDVI B08/B04 a 10 m
 con límites y etiquetas L01-L16.
 
+Para leer los assets s3://eodata/... de Copernicus Data Space se requieren
+credenciales S3. Deben cargarse como variables de entorno:
+  CDSE_S3_ACCESS_KEY
+  CDSE_S3_SECRET_KEY
+Nunca se escriben las claves dentro del repositorio.
+
 La nubosidad global sólo sirve para elegir una escena piloto. Este script no
 clasifica cultivos ni reemplaza el control local posterior con SCL/CLD.
 """
@@ -14,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -28,6 +35,7 @@ DEFAULT_GEOJSON = Path("data/potreros_la_rosaura.geojson")
 DEFAULT_OUT = Path("salidas_sentinel2")
 START = "2024-08-01T00:00:00Z"
 END = "2025-06-30T23:59:59Z"
+CDSE_S3_ENDPOINT = "eodata.dataspace.copernicus.eu"
 
 
 def cloud(item):
@@ -59,15 +67,26 @@ def load_features(path):
     return data.get("features", [])
 
 
-def read_crop(href, features):
-    # Los assets públicos de Copernicus STAC pueden exponerse como s3://.
-    # GDAL/Rasterio intenta usar credenciales AWS por defecto; para recursos
-    # públicos se fuerza acceso anónimo con AWS_NO_SIGN_REQUEST=YES.
-    env_options = {
-        "AWS_NO_SIGN_REQUEST": "YES",
-        "GDAL_HTTP_MULTIRANGE": "YES",
+def s3_env_options():
+    access_key = os.environ.get("CDSE_S3_ACCESS_KEY")
+    secret_key = os.environ.get("CDSE_S3_SECRET_KEY")
+    if not access_key or not secret_key:
+        raise RuntimeError(
+            "Faltan las variables de entorno CDSE_S3_ACCESS_KEY y/o "
+            "CDSE_S3_SECRET_KEY. Cargalas en PowerShell antes de ejecutar."
+        )
+    return {
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
+        "AWS_S3_ENDPOINT": CDSE_S3_ENDPOINT,
+        "AWS_HTTPS": "YES",
+        "AWS_VIRTUAL_HOSTING": "FALSE",
+        "AWS_NO_SIGN_REQUEST": "NO",
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
     }
+
+
+def read_crop(href, features, env_options):
     with rasterio.Env(**env_options):
         with rasterio.open(href) as src:
             geoms = [transform_geom("EPSG:4326", src.crs, f["geometry"], precision=6) for f in features]
@@ -97,18 +116,20 @@ def plot_boundaries(ax, boundaries):
     for feature, geom in boundaries:
         rings = geom["coordinates"] if geom["type"] == "Polygon" else [p for poly in geom["coordinates"] for p in poly]
         for ring in rings:
-            xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
+            xs = [p[0] for p in ring]
+            ys = [p[1] for p in ring]
             ax.plot(xs, ys, linewidth=0.8)
         ring = rings[0]
-        cx = sum(p[0] for p in ring[:-1]) / max(1, len(ring)-1)
-        cy = sum(p[1] for p in ring[:-1]) / max(1, len(ring)-1)
+        cx = sum(p[0] for p in ring[:-1]) / max(1, len(ring) - 1)
+        cy = sum(p[1] for p in ring[:-1]) / max(1, len(ring) - 1)
         pid = feature.get("properties", {}).get("potrero_id", "")
         ax.text(cx, cy, pid, fontsize=7, ha="center", va="center")
 
 
 def extent_from_transform(transform, shape):
     h, w = shape
-    left = transform.c; top = transform.f
+    left = transform.c
+    top = transform.f
     right = left + transform.a * w
     bottom = top + transform.e * h
     return [left, right, bottom, top]
@@ -120,6 +141,9 @@ def main():
     ap.add_argument("--producto-id", default=None, help="ID STAC exacto; si se omite elige menor nubosidad global")
     ap.add_argument("--salida", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
+
+    env_options = s3_env_options()
+    print("Credenciales S3 CDSE detectadas en variables de entorno.")
 
     features = load_features(args.potreros)
     if len(features) != 16:
@@ -133,10 +157,10 @@ def main():
     print(f"Fecha: {date}; nubosidad global: {cloud(item)}%")
     print("Leyendo sólo el recorte de La Rosaura desde B02/B03/B04/B08...")
 
-    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features)
-    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features)
-    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features)
-    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features)
+    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features, env_options)
+    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features, env_options)
+    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features, env_options)
+    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features, env_options)
 
     rgb = np.dstack([stretch(b04), stretch(b03), stretch(b02)])
     denom = b08 + b04
@@ -153,21 +177,28 @@ def main():
     ax.imshow(rgb, extent=extent, origin="upper")
     plot_boundaries(ax, boundaries)
     ax.set_title(f"La Rosaura — Sentinel-2 RGB — {date}")
-    ax.set_xlabel("Este (m)"); ax.set_ylabel("Norte (m)")
-    fig.tight_layout(); fig.savefig(rgb_path, dpi=180); plt.close(fig)
+    ax.set_xlabel("Este (m)")
+    ax.set_ylabel("Norte (m)")
+    fig.tight_layout()
+    fig.savefig(rgb_path, dpi=180)
+    plt.close(fig)
 
     ndvi_path = args.salida / f"{date}_NDVI_La_Rosaura.png"
     fig, ax = plt.subplots(figsize=(10, 8))
     im = ax.imshow(ndvi, extent=extent, origin="upper", vmin=-0.2, vmax=1.0)
     plot_boundaries(ax, boundaries)
     ax.set_title(f"La Rosaura — Sentinel-2 NDVI — {date}")
-    ax.set_xlabel("Este (m)"); ax.set_ylabel("Norte (m)")
+    ax.set_xlabel("Este (m)")
+    ax.set_ylabel("Norte (m)")
     fig.colorbar(im, ax=ax, label="NDVI")
-    fig.tight_layout(); fig.savefig(ndvi_path, dpi=180); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(ndvi_path, dpi=180)
+    plt.close(fig)
 
     print(f"RGB guardado: {rgb_path}")
     print(f"NDVI guardado: {ndvi_path}")
     print("Control visual solamente: una fecha aislada no permite clasificar maíz/pastura ni definir fertilización.")
+
 
 if __name__ == "__main__":
     main()
