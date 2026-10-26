@@ -13,8 +13,9 @@ credenciales S3. Deben cargarse como variables de entorno:
   CDSE_S3_SECRET_KEY
 Nunca se escriben las claves dentro del repositorio.
 
-La nubosidad global sólo sirve para elegir una escena piloto. Este script no
-clasifica cultivos ni reemplaza el control local posterior con SCL/CLD.
+La autenticación se realiza mediante boto3 + rasterio.session.AWSSession,
+porque Rasterio no permite inyectar AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+como opciones GDAL directas en rasterio.Env.
 """
 from __future__ import annotations
 
@@ -23,10 +24,12 @@ import json
 import os
 from pathlib import Path
 
+import boto3
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 from rasterio.mask import mask
+from rasterio.session import AWSSession
 from rasterio.warp import transform_geom
 
 from sentinel2_la_rosaura import load_farm_bbox, search_items
@@ -67,7 +70,7 @@ def load_features(path):
     return data.get("features", [])
 
 
-def s3_env_options():
+def make_aws_session():
     access_key = os.environ.get("CDSE_S3_ACCESS_KEY")
     secret_key = os.environ.get("CDSE_S3_SECRET_KEY")
     if not access_key or not secret_key:
@@ -75,19 +78,24 @@ def s3_env_options():
             "Faltan las variables de entorno CDSE_S3_ACCESS_KEY y/o "
             "CDSE_S3_SECRET_KEY. Cargalas en PowerShell antes de ejecutar."
         )
-    return {
-        "AWS_ACCESS_KEY_ID": access_key,
-        "AWS_SECRET_ACCESS_KEY": secret_key,
-        "AWS_S3_ENDPOINT": CDSE_S3_ENDPOINT,
-        "AWS_HTTPS": "YES",
-        "AWS_VIRTUAL_HOSTING": "FALSE",
-        "AWS_NO_SIGN_REQUEST": "NO",
+    boto_session = boto3.Session(
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name="default",
+    )
+    return AWSSession(
+        boto_session,
+        endpoint_url=f"https://{CDSE_S3_ENDPOINT}",
+        requester_pays=False,
+    )
+
+
+def read_crop(href, features, aws_session):
+    env_options = {
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+        "AWS_VIRTUAL_HOSTING": "FALSE",
     }
-
-
-def read_crop(href, features, env_options):
-    with rasterio.Env(**env_options):
+    with rasterio.Env(aws_session, **env_options):
         with rasterio.open(href) as src:
             geoms = [transform_geom("EPSG:4326", src.crs, f["geometry"], precision=6) for f in features]
             arr, transform = mask(src, geoms, crop=True, filled=True, nodata=0)
@@ -105,11 +113,7 @@ def stretch(x):
 
 
 def transformed_boundaries(features, crs):
-    result = []
-    for f in features:
-        g = transform_geom("EPSG:4326", crs, f["geometry"], precision=6)
-        result.append((f, g))
-    return result
+    return [(f, transform_geom("EPSG:4326", crs, f["geometry"], precision=6)) for f in features]
 
 
 def plot_boundaries(ax, boundaries):
@@ -142,7 +146,7 @@ def main():
     ap.add_argument("--salida", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
-    env_options = s3_env_options()
+    aws_session = make_aws_session()
     print("Credenciales S3 CDSE detectadas en variables de entorno.")
 
     features = load_features(args.potreros)
@@ -157,10 +161,10 @@ def main():
     print(f"Fecha: {date}; nubosidad global: {cloud(item)}%")
     print("Leyendo sólo el recorte de La Rosaura desde B02/B03/B04/B08...")
 
-    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features, env_options)
-    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features, env_options)
-    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features, env_options)
-    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features, env_options)
+    b02, tr, crs = read_crop(asset_href(item, "B02_10m"), features, aws_session)
+    b03, _, _ = read_crop(asset_href(item, "B03_10m"), features, aws_session)
+    b04, _, _ = read_crop(asset_href(item, "B04_10m"), features, aws_session)
+    b08, _, _ = read_crop(asset_href(item, "B08_10m"), features, aws_session)
 
     rgb = np.dstack([stretch(b04), stretch(b03), stretch(b02)])
     denom = b08 + b04
